@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\user\\\\Documents\\\\volleytip-mobilapp\\\\volleytip-app\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(npx tsc *)",
+      "Bash(dir app\\\\workout /b)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\user\\\\Documents\\\\volleytip-mobilapp\\\\volleytip-app\\\\src\\\\features\\\\home\\\\types\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\user\\\\Documents\\\\volleytip-mobilapp\\\\volleytip-app\\\\src\\\\features\\\\home\\\\services\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\user\\\\Documents\\\\volleytip-mobilapp\\\\volleytip-app\\\\src\\\\features\\\\home\\\\hooks\")"
+    ]
+  }
+}
