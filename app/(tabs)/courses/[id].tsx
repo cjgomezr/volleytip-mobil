@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,7 +25,8 @@ import {
   ProgramWeek,
   TrainingProgramCourse,
 } from '../../../src/data/courses.mock';
-import { getCourseById, getCourseVideos } from '../../../src/services/courses.service';
+import { getCourseVideos } from '../../../src/services/courses.service';
+import { useCourseById } from '../../../src/features/courses/hooks/useCoursesData';
 import { colors, fontFamily, fontSize, radius, spacing } from '../../../src/theme';
 
 // ── Day status helpers ─────────────────────────────────────────────────────
@@ -155,7 +157,7 @@ export default function CourseDetailScreen() {
   const router  = useRouter();
   const { t }   = useTranslation();
 
-  const course  = getCourseById(id ?? '');
+  const { data: course, isLoading } = useCourseById(id ?? '');
   const videos  = course?.type === 'video_collection' ? getCourseVideos(id ?? '') : [];
 
   const stableCourse = useMemo(
@@ -167,6 +169,17 @@ export default function CourseDetailScreen() {
   const hasAccess      = usePurchasesStore((s) => s.hasAccess);
   const canAccess      = course ? hasAccess(course.id, course.is_free) : false;
   const [paywallOpen, setPaywallOpen] = useState(false);
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScreenHeader title="" onBack={() => router.back()} />
+        <View style={styles.notFound}>
+          <ActivityIndicator color={colors.accent} size="large" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!course) {
     return (

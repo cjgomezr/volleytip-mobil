@@ -14,6 +14,7 @@ export type Database = {
           id:         string;
           email:      string;
           name:       string;
+          username:   string | null;
           avatar_url: string | null;
           created_at: string;
         };
@@ -21,11 +22,13 @@ export type Database = {
           id:          string;
           email:       string;
           name?:       string;
+          username?:   string | null;
           avatar_url?: string | null;
           created_at?: string;
         };
         Update: {
           name?:       string;
+          username?:   string | null;
           avatar_url?: string | null;
         };
       };
@@ -56,10 +59,15 @@ export type Database = {
           title:            string;
           description:      string | null;
           video_url:        string;
+          video_key:        string | null;
           thumbnail_url:    string | null;
+          thumbnail_key:    string | null;
           category_id:      string | null;
+          category_slug:    string;
           level:            ContentLevel;
           duration_seconds: number;
+          is_free:          boolean;
+          key_points:       string[];
           created_at:       string;
         };
         Insert: {
@@ -67,20 +75,30 @@ export type Database = {
           title:            string;
           description?:     string | null;
           video_url:        string;
+          video_key?:       string | null;
           thumbnail_url?:   string | null;
+          thumbnail_key?:   string | null;
           category_id?:     string | null;
+          category_slug?:   string;
           level?:           ContentLevel;
           duration_seconds?: number;
+          is_free?:         boolean;
+          key_points?:      string[];
           created_at?:      string;
         };
         Update: {
           title?:           string;
           description?:     string | null;
           video_url?:       string;
+          video_key?:       string | null;
           thumbnail_url?:   string | null;
+          thumbnail_key?:   string | null;
           category_id?:     string | null;
+          category_slug?:   string;
           level?:           ContentLevel;
           duration_seconds?: number;
+          is_free?:         boolean;
+          key_points?:      string[];
         };
       };
 
@@ -108,35 +126,50 @@ export type Database = {
 
       courses: {
         Row: {
-          id:            string;
-          title:         string;
-          description:   string | null;
-          type:          CourseType;
-          price:         number | null;
-          is_free:       boolean;
-          level:         ContentLevel;
-          thumbnail_url: string | null;
-          created_at:    string;
+          id:                             string;
+          title:                          string;
+          description:                    string | null;
+          type:                           CourseType;
+          price:                          number | null;
+          is_free:                        boolean;
+          level:                          ContentLevel;
+          thumbnail_url:                  string | null;
+          thumbnail_key:                  string | null;
+          tags:                           string[];
+          instructor:                     string | null;
+          sessions_per_week:              number;
+          estimated_minutes_per_session:  number;
+          created_at:                     string;
         };
         Insert: {
-          id?:            string;
-          title:          string;
-          description?:   string | null;
-          type?:          CourseType;
-          price?:         number | null;
-          is_free?:       boolean;
-          level?:         ContentLevel;
-          thumbnail_url?: string | null;
-          created_at?:    string;
+          id?:                            string;
+          title:                          string;
+          description?:                   string | null;
+          type?:                          CourseType;
+          price?:                         number | null;
+          is_free?:                       boolean;
+          level?:                         ContentLevel;
+          thumbnail_url?:                 string | null;
+          thumbnail_key?:                 string | null;
+          tags?:                          string[];
+          instructor?:                    string | null;
+          sessions_per_week?:             number;
+          estimated_minutes_per_session?: number;
+          created_at?:                    string;
         };
         Update: {
-          title?:         string;
-          description?:   string | null;
-          type?:          CourseType;
-          price?:         number | null;
-          is_free?:       boolean;
-          level?:         ContentLevel;
-          thumbnail_url?: string | null;
+          title?:                         string;
+          description?:                   string | null;
+          type?:                          CourseType;
+          price?:                         number | null;
+          is_free?:                       boolean;
+          level?:                         ContentLevel;
+          thumbnail_url?:                 string | null;
+          thumbnail_key?:                 string | null;
+          tags?:                          string[];
+          instructor?:                    string | null;
+          sessions_per_week?:             number;
+          estimated_minutes_per_session?: number;
         };
       };
 
@@ -167,28 +200,37 @@ export type Database = {
 
       module_items: {
         Row: {
-          id:           string;
-          module_id:    string;
-          video_id:     string;
-          sets:         number | null;
-          reps:         number | null;
-          rest_seconds: number | null;
-          sort_order:   number;
+          id:               string;
+          module_id:        string;
+          video_id:         string;
+          exercise_name:    string | null;
+          sets:             number | null;
+          reps:             number | null;
+          duration_seconds: number;
+          rest_seconds:     number | null;
+          note:             string | null;
+          sort_order:       number;
         };
         Insert: {
-          id?:           string;
-          module_id:     string;
-          video_id:      string;
-          sets?:         number | null;
-          reps?:         number | null;
-          rest_seconds?: number | null;
-          sort_order?:   number;
+          id?:               string;
+          module_id:         string;
+          video_id:          string;
+          exercise_name?:    string | null;
+          sets?:             number | null;
+          reps?:             number | null;
+          duration_seconds?: number;
+          rest_seconds?:     number | null;
+          note?:             string | null;
+          sort_order?:       number;
         };
         Update: {
-          sets?:         number | null;
-          reps?:         number | null;
-          rest_seconds?: number | null;
-          sort_order?:   number;
+          exercise_name?:    string | null;
+          sets?:             number | null;
+          reps?:             number | null;
+          duration_seconds?: number;
+          rest_seconds?:     number | null;
+          note?:             string | null;
+          sort_order?:       number;
         };
       };
 
@@ -256,48 +298,75 @@ export type Database = {
 
       routines: {
         Row: {
-          id:          string;
-          user_id:     string;
-          name:        string;
-          is_public:   boolean;
-          likes_count: number;
-          created_at:  string;
+          id:                 string;
+          user_id:            string;
+          name:               string;
+          description:        string;
+          is_public:          boolean;
+          likes_count:        number;
+          estimated_minutes:  number;
+          level:              string;
+          tags:               string[];
+          author_name:        string;
+          created_at:         string;
         };
         Insert: {
-          id?:         string;
-          user_id:     string;
-          name:        string;
-          is_public?:  boolean;
-          likes_count?: number;
-          created_at?: string;
+          id?:                string;
+          user_id:            string;
+          name:               string;
+          description?:       string;
+          is_public?:         boolean;
+          likes_count?:       number;
+          estimated_minutes?: number;
+          level?:             string;
+          tags?:              string[];
+          author_name?:       string;
+          created_at?:        string;
         };
         Update: {
-          name?:      string;
-          is_public?: boolean;
+          name?:              string;
+          description?:       string;
+          is_public?:         boolean;
+          estimated_minutes?: number;
+          level?:             string;
+          tags?:              string[];
+          author_name?:       string;
         };
       };
 
       routine_exercises: {
         Row: {
-          id:          string;
-          routine_id:  string;
-          exercise_id: string;
-          sets:        number;
-          reps:        number;
-          sort_order:  number;
+          id:               string;
+          routine_id:       string;
+          exercise_id:      string;
+          exercise_name:    string;
+          sets:             number;
+          reps:             number;
+          duration_seconds: number;
+          rest_seconds:     number;
+          note:             string | null;
+          sort_order:       number;
         };
         Insert: {
-          id?:          string;
-          routine_id:   string;
-          exercise_id:  string;
-          sets?:        number;
-          reps?:        number;
-          sort_order?:  number;
+          id?:               string;
+          routine_id:        string;
+          exercise_id:       string;
+          exercise_name?:    string;
+          sets?:             number;
+          reps?:             number;
+          duration_seconds?: number;
+          rest_seconds?:     number;
+          note?:             string | null;
+          sort_order?:       number;
         };
         Update: {
-          sets?:       number;
-          reps?:       number;
-          sort_order?: number;
+          exercise_name?:    string;
+          sets?:             number;
+          reps?:             number;
+          duration_seconds?: number;
+          rest_seconds?:     number;
+          note?:             string | null;
+          sort_order?:       number;
         };
       };
 
@@ -338,7 +407,12 @@ export type Database = {
       content_level: ContentLevel;
       course_type:   CourseType;
     };
-    Functions: Record<string, never>;
+    Functions: {
+      find_email_by_username: {
+        Args:    { p_username: string };
+        Returns: string | null;
+      };
+    };
     Views:     Record<string, never>;
   };
 };

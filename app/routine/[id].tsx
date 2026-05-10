@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { recordActivityDate } from '../../src/lib/activity';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Alert,
@@ -18,7 +19,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '../../src/components/ui';
-import { RoutineExercise } from '../../src/data/routines.mock';
+import { Routine, RoutineExercise } from '../../src/data/routines.mock';
 import { getRoutineById } from '../../src/services/routines.service';
 import { MOCK_VIDEOS } from '../../src/data/videos.mock';
 import { resolveVideoUrl } from '../../src/lib/r2';
@@ -186,7 +187,17 @@ export default function RoutineExecutionScreen() {
   const { t }   = useTranslation();
   const insets  = useSafeAreaInsets();
 
-  const routine = useMemo(() => getRoutineById(id ?? ''), [id]);
+  const [routine, setRoutine] = useState(() => getRoutineById(id ?? ''));
+
+  useEffect(() => {
+    if (routine || !id) return;
+    AsyncStorage.getItem('@volleytip/my_routines').then((raw) => {
+      if (!raw) return;
+      const list: Routine[] = JSON.parse(raw);
+      const found = list.find((r) => r.id === id);
+      if (found) setRoutine(found);
+    }).catch(() => {});
+  }, [id]);
   const [state, dispatch] = useReducer(reducer, INIT);
   const pulse = usePulse();
 
@@ -218,6 +229,7 @@ export default function RoutineExecutionScreen() {
         AsyncStorage.setItem(completedKey(id), String(count));
       });
       AsyncStorage.removeItem(progressKey(id));
+      recordActivityDate();
     } else {
       AsyncStorage.setItem(progressKey(id), JSON.stringify(state));
     }

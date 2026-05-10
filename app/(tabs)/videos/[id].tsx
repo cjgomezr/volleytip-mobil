@@ -16,7 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { VideoCard } from '../../../src/components/videos/VideoCard';
 import { Badge, Text } from '../../../src/components/ui';
-import { getRelatedVideos, getVideoById } from '../../../src/services/videos.service';
+import { VideoItem } from '../../../src/data/videos.mock';
+import { useVideoById } from '../../../src/features/videos/hooks/useVideosData';
+import { getRelatedVideos } from '../../../src/services/videos.service';
 import { resolveVideoUrl } from '../../../src/lib/r2';
 import { colors, fontFamily, fontSize, radius, spacing } from '../../../src/theme';
 
@@ -28,46 +30,36 @@ function formatTime(secs: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function VideoDetailScreen() {
+// ── Inner component: created only when video is ready, so useVideoPlayer
+//    always receives a valid source on first call (no replace() needed)
+function VideoContent({ video }: { video: VideoItem }) {
   const { t }  = useTranslation();
-  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  const video = getVideoById(id ?? '');
+  const src = resolveVideoUrl(video.video_url, video.video_key);
 
-  const player = useVideoPlayer(
-    video ? resolveVideoUrl(video.video_url, video.video_key) : null,
-    (p) => {
-      p.loop = false;
-      p.timeUpdateEventInterval = 0.5;
-      p.play();
-    },
-  );
+  const player = useVideoPlayer(src, (p) => {
+    p.loop = false;
+    p.timeUpdateEventInterval = 0.5;
+    p.play();
+  });
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: false });
   const { status }    = useEvent(player, 'statusChange',  { status: player.status });
 
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration,    setDuration]    = useState(video?.duration_seconds ?? 0);
+  const [duration,    setDuration]    = useState(video.duration_seconds ?? 0);
 
   useEventListener(player, 'timeUpdate', (e) => setCurrentTime(e.currentTime));
   useEventListener(player, 'sourceLoad', (e) => { if (e.duration > 0) setDuration(e.duration); });
   useEventListener(player, 'playToEnd',  ()  => setCurrentTime(0));
 
-  // Pause when navigating away (tab switch, back, etc.)
+  // Pause when leaving screen; guarded against already-released player
   useFocusEffect(
     useCallback(() => {
-      return () => { player.pause(); };
+      return () => { try { player.pause(); } catch {} };
     }, [player]),
   );
-
-  if (!video) {
-    return (
-      <SafeAreaView style={styles.notFound}>
-        <Text variant="body" color={colors.textSecondary}>{t('errors.notFound')}</Text>
-      </SafeAreaView>
-    );
-  }
 
   const related  = getRelatedVideos(video);
   const progress = duration > 0 ? currentTime / duration : 0;
@@ -75,7 +67,7 @@ export default function VideoDetailScreen() {
 
   return (
     <View style={styles.flex}>
-      {/* Header with safe-area top */}
+      {/* Header */}
       <SafeAreaView style={styles.headerSafe} edges={['top']}>
         <View style={styles.header}>
           <Pressable onPress={() => router.navigate('/(tabs)/videos')} hitSlop={8} style={styles.backBtn}>
@@ -92,15 +84,13 @@ export default function VideoDetailScreen() {
           style={styles.video}
           contentFit="contain"
           nativeControls={false}
-          allowsFullscreen
         />
 
-        {/* Tap to toggle play/pause */}
+        {/* Tap overlay: toggle play/pause */}
         <Pressable
           style={StyleSheet.absoluteFillObject}
           onPress={() => (isPlaying ? player.pause() : player.play())}
         >
-          {/* Center: spinner while loading, play icon while paused */}
           <View style={styles.centerControl} pointerEvents="none">
             {status === 'loading' ? (
               <ActivityIndicator color="#fff" size="large" />
@@ -112,7 +102,7 @@ export default function VideoDetailScreen() {
           </View>
         </Pressable>
 
-        {/* Bottom progress bar */}
+        {/* Progress bar */}
         <View style={styles.progressBar} pointerEvents="none">
           <Text style={styles.timeText}>
             {formatTime(currentTime)} / {formatTime(duration)}
@@ -129,7 +119,6 @@ export default function VideoDetailScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Title + badges */}
         <Text variant="h3">{video.title}</Text>
         <View style={styles.badgeRow}>
           <Badge label={video.category_name} />
@@ -140,15 +129,13 @@ export default function VideoDetailScreen() {
           </Text>
         </View>
 
-        {/* Description */}
         <View style={styles.section}>
           <Text variant="label" color={colors.textSecondary} style={styles.sectionTitle}>
-            DESCRIPCIÓN
+            {t('videos.detail.description' as any).toUpperCase()}
           </Text>
           <Text variant="body" color={colors.textSecondary}>{video.description}</Text>
         </View>
 
-        {/* Key points */}
         {video.key_points.length > 0 && (
           <View style={styles.section}>
             <Text variant="label" color={colors.textSecondary} style={styles.sectionTitle}>
@@ -163,7 +150,6 @@ export default function VideoDetailScreen() {
           </View>
         )}
 
-        {/* Related videos */}
         {related.length > 0 && (
           <View style={styles.section}>
             <Text variant="h4" style={styles.sectionTitle}>{t('videos.detail.relatedVideos')}</Text>
@@ -190,11 +176,36 @@ export default function VideoDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  flex:     { flex: 1, backgroundColor: colors.bgPrimary },
-  notFound: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' },
+// ── Outer component: handles loading / not-found states
+export default function VideoDetailScreen() {
+  const { t }  = useTranslation();
+  const { id } = useLocalSearchParams<{ id: string }>();
 
-  // Header
+  const { data: video, isLoading } = useVideoById(id ?? '');
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <ActivityIndicator color={colors.accent} size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  if (!video) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <Text variant="body" color={colors.textSecondary}>{t('errors.notFound')}</Text>
+      </SafeAreaView>
+    );
+  }
+
+  return <VideoContent video={video} />;
+}
+
+const styles = StyleSheet.create({
+  flex:    { flex: 1, backgroundColor: colors.bgPrimary },
+  centered: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' },
+
   headerSafe: { backgroundColor: colors.bgPrimary },
   header: {
     height: 52,
@@ -206,7 +217,6 @@ const styles = StyleSheet.create({
   backBtn:     { flexShrink: 0 },
   headerTitle: { flex: 1 },
 
-  // Player
   videoWrap: {
     width: '100%',
     height: VIDEO_HEIGHT,
@@ -255,7 +265,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
 
-  // Content
   scroll:        { flex: 1 },
   scrollContent: { padding: spacing.screen, gap: spacing.lg },
 
@@ -266,7 +275,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
-  section: { gap: spacing.sm },
+  section:      { gap: spacing.sm },
   sectionTitle: { letterSpacing: 0.6, marginBottom: spacing.xs },
 
   keyPoint: {

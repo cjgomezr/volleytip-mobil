@@ -20,16 +20,16 @@ import { colors, spacing } from '../../src/theme';
 
 export default function LoginScreen() {
   const { t } = useTranslation();
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [errors,   setErrors]   = useState<{ email?: string; password?: string }>({});
+  const [credential, setCredential] = useState('');
+  const [password,   setPassword]   = useState('');
+  const [errors,     setErrors]     = useState<{ credential?: string; password?: string }>({});
 
   const { signIn, signInWithGoogle, loading } = useAuthStore();
 
   function validate() {
     const e: typeof errors = {};
-    if (!email.trim())  e.email    = t('errors.generic');
-    if (!password)      e.password = t('errors.generic');
+    if (!credential.trim()) e.credential = t('errors.generic');
+    if (!password)          e.password   = t('errors.generic');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -37,7 +37,7 @@ export default function LoginScreen() {
   async function handleSignIn() {
     if (!validate()) return;
     try {
-      await signIn(email.trim(), password);
+      await signIn(credential.trim(), password);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       const key = authService.mapAuthError(msg);
@@ -58,12 +58,13 @@ export default function LoginScreen() {
   }
 
   async function handleForgotPassword() {
-    if (!email.trim()) {
+    const isEmail = credential.trim().includes('@');
+    if (!isEmail) {
       Alert.alert('', t('auth.emailRequired'));
       return;
     }
     try {
-      await authService.resetPassword(email.trim());
+      await authService.resetPassword(credential.trim());
       Alert.alert(t('auth.forgotPassword'), t('auth.resetPasswordSent'));
     } catch {
       Alert.alert(t('common.error'), t('errors.generic'));
@@ -96,13 +97,13 @@ export default function LoginScreen() {
         {/* Form */}
         <View style={styles.form}>
           <Input
-            label={t('auth.email')}
+            label={t('auth.usernameOrEmail')}
             placeholder="email@example.com"
-            value={email}
-            onChangeText={(v) => { setEmail(v); setErrors((e) => ({ ...e, email: undefined })); }}
-            keyboardType="email-address"
-            autoComplete="email"
-            error={errors.email}
+            value={credential}
+            onChangeText={(v) => { setCredential(v); setErrors((e) => ({ ...e, credential: undefined })); }}
+            autoCapitalize="none"
+            autoComplete="username"
+            error={errors.credential}
           />
           <Input
             label={t('auth.password')}

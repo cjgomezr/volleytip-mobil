@@ -1,6 +1,6 @@
 # VolleyTip — Estado del Proyecto
 
-Última actualización: 2026-05-10 — Módulos completados: M1–M13
+Última actualización: 2026-05-10 — Módulos completados: M1–M14 + extras + mejoras visuales
 
 ---
 
@@ -18,17 +18,27 @@
 | i18next | 26.0.10 | Internacionalización |
 | react-i18next | 17.0.7 | Integración React |
 | expo-video | 3.0.16 | Reproductor de video |
+| expo-image | — | Imágenes optimizadas (caché, blur-up) |
 | expo-localization | 17.0.8 | Detección idioma dispositivo |
 | react-native-gesture-handler | 2.28.0 | Gestos |
 | react-native-reanimated | 4.1.1 | Animaciones |
 | react-native-safe-area-context | 5.6.0 | Safe areas |
 | @expo-google-fonts/roboto | 0.4.3 | Tipografía Roboto |
 | @react-native-async-storage/async-storage | 2.2.0 | Persistencia local |
+| expo-dev-client | 6.0.21 | Dev Client (Android) |
+| @tanstack/react-query | 5.x | Server state + cache |
 | react-native-purchases | pendiente instalar | RevenueCat — pagos |
 | cross-env | 10.1.0 | Scripts multi-env |
 | dotenv | 17.4.2 | Variables de entorno |
 
 **Directorio:** `C:\Users\user\Documents\volleytip-mobilapp\volleytip-app`
+
+**Repositorio GitHub:** `https://github.com/cjgomezr/volleytip-mobil.git`
+
+**Runtime actual:** Expo Dev Client (Android) ✅ — EAS projectId: `156d9c99-788b-4cbf-a413-59b48a2c93cd`
+- `npm start` → Metro con Dev Client (usar la app instalada en el emulador)
+- `npm run start:go` → Expo Go (fallback, sin native modules)
+- `npm run build:android:dev` → nuevo APK de desarrollo vía EAS
 
 **Instalar RevenueCat (aún pendiente):**
 ```bash
@@ -45,7 +55,7 @@ npx expo install react-native-purchases
 - **Navbar:** `#0d0d12`
 - **Tipografía:** Roboto (400 Regular / 500 Medium / 700 Bold / 900 Black)
 - **Archivos:** `src/theme/colors.ts`, `typography.ts`, `spacing.ts`, `radius.ts`
-- **Idiomas:** Español + Inglés, auto-detect idioma del dispositivo + override manual, keys tipados con TypeScript
+- **Idiomas:** Español + Inglés, auto-detect idioma del dispositivo + override manual
 
 ---
 
@@ -76,22 +86,40 @@ Scripts `npm start` / `npm start:prod` con `cross-env`.
 `course_modules`, `module_items`, `purchases`, `user_progress`, `video_views`,
 `routines`, `routine_exercises`, `routine_likes`, `routine_saves`.
 
-### ✅ M5 — Autenticación (email)
-`src/store/auth.store.ts` con Zustand: `session`, `user`, `initialized`.
-`initialize()` con `.catch(() => set({ initialized: true }))` failsafe — la app nunca
-queda bloqueada si Supabase falla o la red no está disponible.
-`useProtectedRoute` hook para redirección automática login ↔ tabs.
-Pantallas: `app/(auth)/login.tsx`, `app/(auth)/register.tsx`, `app/(auth)/forgot-password.tsx`.
-`supabase.auth.onAuthStateChange` mantiene sesión sincronizada en tiempo real.
-**Google OAuth: deliberadamente postergado** — ver sección de Módulos Pendientes.
+### ✅ M5 — Autenticación robusta
+`src/store/auth.store.ts` con Zustand. Características:
+- `initialize()` con módulo-level `_initCalled` (evita doble-init de React StrictMode)
+- Flag `settled` + `settle(session)` para evitar race conditions
+- **Timeout de 5 segundos**: si `getSession()` cuelga, fuerza signOut y desbloquea UI
+- **Validación de expiración**: si el token expiró, intenta `refreshSession()` silencioso; si falla → signOut
+- **`try-catch` en `onAuthStateChange`**: cualquier error fuerza signOut (nunca queda en estado corrupto)
+- **Dev AppState listener**: al volver la app al foreground en desarrollo, re-verifica sesión
+- **Login con email O username**: `signIn(emailOrUsername, password)` → si no tiene `@`, llama RPC `find_email_by_username` en Supabase
+- **Registro con username**: `signUp(email, password, fullName, username)` guarda username en tabla `users`
+- `useProtectedRoute` hook para redirección automática login ↔ tabs
+- Pantallas: `app/(auth)/login.tsx`, `app/(auth)/register.tsx`, `app/(auth)/forgot-password.tsx`
+- **Google OAuth: deliberadamente postergado** — ver sección Pendientes
+
+**SQL necesario en Supabase (ya corrido en dev y prod):**
+```sql
+-- Sección 9 del seed.sql:
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
+CREATE OR REPLACE FUNCTION find_email_by_username(p_username TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE v_email TEXT;
+BEGIN
+  SELECT email INTO v_email FROM users WHERE username = p_username LIMIT 1;
+  RETURN v_email;
+END;
+$$;
+```
 
 ### ✅ M6 — Navegación base (Tab Bar)
 5 tabs: Home / Videos / Cursos / Rutinas / Perfil.
 `app/(tabs)/_layout.tsx` con Ionicons, colores del tema, `GestureHandlerRootView`.
 
 ### ✅ M7 — Módulo de Videos
-`src/data/videos.mock.ts` — 9 videos mock con categorías, niveles, `video_key` y `thumbnail_key`
-para R2 (ver M12). En dev usa sample videos públicos como fallback.
+`src/data/videos.mock.ts` — 9 videos mock con categorías, niveles, `video_key` y `thumbnail_key` para R2.
 `src/services/videos.service.ts` — filtros por categoría, búsqueda por texto, sort.
 `src/components/videos/VideoCard.tsx` — modo compact y full.
 `app/(tabs)/videos/index.tsx` — biblioteca con search, filtros de categoría, sort.
@@ -109,278 +137,173 @@ Pausa automática al salir de la pantalla con `useFocusEffect`.
 `app/(tabs)/courses/[id].tsx` — detalle completo:
 - `WeekAccordion` expandible con estado de cada día (done/pending/rest)
 - `useDayStatuses` hook que lee AsyncStorage para el progreso
-- **Fix infinite loop:** `EMPTY_PROGRAM` constante módulo-nivel + `useMemo` para estabilizar
-  la referencia cuando el curso no es `training_program`
 - Paywall integrado (M11): CTA dinámico Iniciar/Comprar, días bloqueados sin acceso
+
+**Fix infinite loop (ya aplicado):** constante `EMPTY_PROGRAM` módulo-nivel + `useMemo` para
+estabilizar la referencia cuando el curso no es `training_program`.
 
 ### ✅ M9 — Ejecución de Workouts
 `app/workout/[id].tsx` — máquina de estados completa con `useReducer`:
 - Fases: `intro → exercise → rest → complete`
 - `restAfterLastSet: boolean` determina si al acabar el descanso avanza ejercicio o serie
-- `usePulseAnim()` hook: `Animated.loop` + `Animated.sequence` para el círculo del temporizador
-- `VideoModal` sub-componente con `useVideoPlayer(url ?? null)` — null es `VideoSource` válido
-- Persistencia en AsyncStorage: `@volleytip/workout_progress_${id}` (en progreso) y
-  `@volleytip/day_done_${id}` (completado)
+- `usePulseAnim()` hook: animación pulsante para el círculo del temporizador de descanso
+- `VideoModal` sub-componente con `useVideoPlayer` — botón "Ver video" durante el ejercicio
+- Persistencia en AsyncStorage: progreso en curso y día completado
 - Pantalla de celebración con estadísticas: tiempo total, ejercicios, series
 - `useFocusEffect` + `BackHandler` para interceptar botón físico atrás en Android
 
 `app/routine/[id].tsx` — misma arquitectura adaptada para rutinas libres (sin programa).
-Persiste contador: `@volleytip/routine_done_count_${id}`.
 
 ### ✅ M10 — Creador de Rutinas + Comunidad
-`src/data/exercises.mock.ts` — 30 ejercicios en 6 categorías:
-`saltabilidad`, `fuerza`, `pliometria`, `tecnica`, `movilidad`, `core`.
-Cada ejercicio tiene: sets/reps/duration/rest por defecto, video_id opcional, nota opcional.
 
-`src/data/routines.mock.ts` — 5 rutinas de comunidad mock con autor, nivel, tags, likes.
-`src/services/routines.service.ts` — `getCommunityRoutines` (con filtro y sort), `getSavedRoutines`, `getRoutineById`.
-`src/components/routines/RoutineCard.tsx` — nivel con color (success/warning/error), duración,
-avatar inicial del autor, likes count, botón bookmark.
+**`src/data/exercises.mock.ts`** — 30 ejercicios en 6 categorías con `muscle_group` asignado:
+- Categorías: `saltabilidad`, `fuerza`, `pliometria`, `tecnica`, `movilidad`, `core`
+- `muscle_group` valores: `Piernas`, `Glúteos`, `Isquiotibiales`, `Core`, `Hombros`, `Brazos`, `Espalda`, `Caderas`, `Cuerpo completo`
 
-`app/(tabs)/routines/index.tsx` — 3 tabs (Comunidad / Guardadas / Mis rutinas):
-- Búsqueda de texto (solo en comunidad)
-- Sort chips: más gustadas / más nuevas
-- Like optimista con `Set<string>` (incrementa contador localmente)
-- `useFocusEffect` recarga rutinas propias desde AsyncStorage al volver al tab
-
-`app/routine-builder.tsx` — creador completo:
-- `useReducer` con acciones: `SET_NAME`, `TOGGLE_PUBLIC`, `ADD_EXERCISE`, `REMOVE_EXERCISE`,
-  `SET_SETS`, `MOVE_UP`, `MOVE_DOWN`
-- Modal `AddExerciseModal` (pageSheet): búsqueda + filtro por categoría, checkbox para ya agregados
-- `ExerciseRow`: flechas arriba/abajo para reordenar, stepper +/- de series (1–10), botón eliminar
-- `Switch` para público/privado
-- Estimación de minutos basada en series × (tiempo por set + descanso)
+**`app/routine-builder.tsx`** — creador completo:
+- `useReducer` con acciones: `SET_NAME`, `TOGGLE_PUBLIC`, `ADD_EXERCISE`, `REMOVE_EXERCISE`, `SET_SETS`, `SET_REPS`, `SET_DURATION`, `SET_REST`, `MOVE_UP`, `MOVE_DOWN`
+- **Modal `AddExerciseModal`** (pageSheet): búsqueda + filtro por categoría
+  - Toggle tap-para-agregar / tap-para-quitar: si el ejercicio ya está en la rutina, tocarlo lo elimina directamente desde el modal
+  - **"Ver video"**: botón play por ejercicio (si tiene `video_id`), abre `VideoPreviewModal`
+  - **Badge de grupo muscular**: chip coloreado con ícono y etiqueta
+  - Safe area top aplicada (`insets.top`) para que el botón "Listo" no quede bajo la barra de estado en Android
+- **`ExerciseRow`** (en la rutina armada): flechas arriba/abajo, botón eliminar + **3 steppers**:
+  - **Series** (1–10)
+  - **Reps** (1–100) para ejercicios por repetición, o **Tiempo** (5–300s, paso ±5s) para ejercicios cronometrados
+  - **Descanso** (0–300s, paso ±5s) — inicializado desde el valor recomendado del ejercicio
+- `getMuscleGroupMeta()`: mapea `muscle_group` → `{ icon, color, label }` (6 grupos con colores distintos)
+- `MuscleGroupBadge`: pill con Ionicons + etiqueta corta
+- `VideoPreviewModal`: modal expo-video para previsualizar ejercicio antes de agregarlo
+- `estimateMinutes` y `handleSave` usan `row.duration` y `row.rest` editados por el usuario
 - Guarda en `@volleytip/my_routines` (AsyncStorage)
 
+**`src/data/routines.mock.ts`** — 5 rutinas de comunidad mock.
+**`src/services/routines.service.ts`** — `getCommunityRoutines`, `getSavedRoutines`, `getRoutineById`.
+**`src/components/routines/RoutineCard.tsx`** — nivel con color, duración, avatar autor, likes, bookmark.
+
+**`app/(tabs)/routines/index.tsx`** — 3 tabs (Comunidad / Guardadas / Mis rutinas):
+- Búsqueda de texto (solo en comunidad)
+- Sort chips: más gustadas / más nuevas
+- Like optimista con `Set<string>`
+- `useFocusEffect` recarga rutinas propias desde AsyncStorage al volver al tab
+
 ### ✅ M11 — RevenueCat (Pagos)
-**Flujo:** usuario ve curso de pago → toca Comprar → paga una vez → acceso permanente.
-El registro se guarda en la tabla `purchases` de Supabase (fuente de verdad).
-
-`src/lib/revenuecat.ts` — wrapper del SDK con **stub mode automático**:
-- `require('react-native-purchases')` en try/catch: si falla (Expo Go) → `_sdk = null`
-- Cuando `_sdk === null`: todas las funciones son no-ops o retornan datos mock
-- Stub de compra simula 1.2s de delay y retorna éxito → flujo de UI completo testeable en Expo Go
-- Para pagos reales: dev build con EAS (`npm run build:ios`)
-
-`src/services/purchases.service.ts`:
-- `fetchOwnedCourseIds(userId)` — lee tabla `purchases` en Supabase
-- `recordPurchase(userId, courseId, revenuecatId)` — inserta en `purchases`, ignora duplicados (error 23505)
-
-`src/store/purchases.store.ts` (Zustand):
-- `ownedCourseIds: Set<string>` — cargado desde Supabase al iniciar sesión
-- `hasActiveSubscription: boolean` — siempre `false` hasta activar suscripciones
-- `initialize(userId)` — carga desde Supabase + chequea suscripción activa en RC
-- `buyCourse(courseId)` — llama RC → guarda en Supabase → actualiza store
-- `restorePurchases(userId)` — llama RC restore → recarga desde Supabase
-- `hasAccess(courseId, isFree)` — `isFree || ownedCourseIds.has(id) || hasActiveSubscription`
-- `reset()` — limpia estado al cerrar sesión
-
-`src/components/paywall/CoursePaywall.tsx` — modal bottom-sheet:
-- Precio real desde App Store (RC) con fallback a `price_usd` del mock
-- 4 beneficios con checkmarks
-- Botón "Comprar — $X.XX" con `ActivityIndicator` durante el proceso
-- "Restaurar compras" (requerido por App Store guidelines)
-- Texto legal "Pago único · Sin suscripción · Acceso permanente"
-
-`app/(tabs)/courses/[id].tsx` — integrado:
-- `canAccess = hasAccess(course.id, course.is_free)` decide qué CTA mostrar
-- CTA: botón Iniciar/Continuar (cyan) si tiene acceso, botón Comprar (gris + 🔒) si no
-- `WeekAccordion` recibe `canAccess` — oculta botones de día si no hay acceso
-
-`app/_layout.tsx` — inicialización:
-- `configureRevenueCat()` al montar
-- `loginRevenueCat(userId)` + `initializePurchases(userId)` cuando cambia la sesión
-- `resetPurchases()` al cerrar sesión
-
-**Convención de product IDs RevenueCat:**
-- Curso: `volleytip_course_{courseId_sanitizado}` (ej: `volleytip_course_6weeks_jump`)
-- Suscripción mensual: `volleytip_monthly` (definido, NO expuesto en UI — activar en versión futura)
-- Suscripción anual: `volleytip_annual` (definido, NO expuesto en UI)
+`src/lib/revenuecat.ts` — wrapper con **stub mode automático** (si SDK no disponible → stubs).
+`src/services/purchases.service.ts` — `fetchOwnedCourseIds`, `recordPurchase`.
+`src/store/purchases.store.ts` — `ownedCourseIds`, `hasAccess`, `buyCourse`, `restorePurchases`.
+`src/components/paywall/CoursePaywall.tsx` — modal bottom-sheet con precio real/fallback.
+**Convención de IDs:** `volleytip_course_{courseId}`, `volleytip_monthly`, `volleytip_annual`.
 
 ### ✅ M12 — Cloudflare R2 (Infraestructura de Videos)
-`src/lib/r2.ts` — resolver de URLs, dos funciones públicas:
-- `resolveVideoUrl(video_url, video_key)` → si `R2_PUBLIC_URL` configurado y `video_key` existe,
-  devuelve `${R2_PUBLIC_URL}/${video_key}`; si no, devuelve `video_url` (fallback dev)
-- `resolveThumbnailUrl(thumbnail_url, thumbnail_key)` — misma lógica para thumbnails
-- `r2Url(key)` — helper interno para construir la URL completa
+`src/lib/r2.ts` — `resolveVideoUrl(video_url, video_key)` y `resolveThumbnailUrl`.
+Lógica: si `R2_PUBLIC_URL` está configurado y existe `video_key` → URL de R2; si no → fallback.
+Los tres reproductores (`videos/[id]`, `workout/[id]`, `routine/[id]`) usan `resolveVideoUrl`.
+**Para activar R2:** solo agregar `R2_PUBLIC_URL=https://videos.volleytip.app` a `.env.production`.
 
-`VideoItem` (en `videos.mock.ts`) tiene dos campos nuevos en cada entrada:
-- `video_key: string` — ruta canónica en el bucket (ej: `saltabilidad/v1-salto-vertical-fundamentos.mp4`)
-- `thumbnail_key: string` — ruta del thumbnail (ej: `thumbnails/v1-salto-vertical-fundamentos.jpg`)
+### ✅ M13 — Home con datos reales de Supabase
+`app/(tabs)/index.tsx` reescrito completamente:
+- Saludo personalizado con franja horaria + nombre del usuario
+- Logo + avatar con inicial del usuario
+- Stats: sesiones, racha real, mis rutinas
+- **Thumbnails visibles**: `FeaturedVideoCard`, `FeaturedCourseCard`, `PurchasedCourseCard` usan `expo-image` con `thumbnail_url`; el campo existía en los tipos pero nunca se renderizaba
+- Cursos comprados, videos destacados, cursos destacados, rutinas de comunidad
+- Skeleton loaders + pull-to-refresh
+- `src/features/home/` — arquitectura feature-first con TanStack Query hooks
 
-Los tres reproductores usan `resolveVideoUrl` en lugar de `video_url` directo:
-- `app/(tabs)/videos/[id].tsx` → `resolveVideoUrl(video.video_url, video.video_key)`
-- `app/workout/[id].tsx` → `resolveVideoUrl(currentVideo?.video_url, currentVideo?.video_key)`
-- `app/routine/[id].tsx` → `resolveVideoUrl(currentVideo?.video_url, currentVideo?.video_key)`
-
-`src/lib/config.ts` y `app.config.ts` exponen `r2PublicUrl` desde `R2_PUBLIC_URL` env var.
-
-**Para activar R2 en producción (sin cambios de código):**
-1. Crear bucket `volleytip-videos` en Cloudflare R2
-2. Activar acceso público o configurar custom domain (`videos.volleytip.app`)
-3. Subir videos con los paths exactos de `video_key` de cada `VideoItem`
-4. Agregar `R2_PUBLIC_URL=https://videos.volleytip.app` a `.env.production`
-5. Listo
-
-**Rutas de video en el bucket (para subir):**
-```
-saltabilidad/v1-salto-vertical-fundamentos.mp4
-saltabilidad/v2-salto-potencia-cajon.mp4
-saltabilidad/v3-drop-jumps-reactividad.mp4
-fuerza/v4-sentadillas-voley.mp4
-fuerza/v5-press-militar-mancuernas.mp4
-potencia/v6-pliometria-brazos-remate.mp4
-elasticidad/v7-estiramiento-cadera-cadena-posterior.mp4
-tecnica/v8-voleo-posicion-manos-contacto.mp4
-tecnica/v9-remate-aproximacion-salto.mp4
-
-thumbnails/v1-salto-vertical-fundamentos.jpg
-thumbnails/v2-salto-potencia-cajon.jpg
-... (mismo patrón para el resto)
-```
-
-**Para signed URLs (futuro):** reemplazar el cuerpo de `resolveVideoUrl` en `r2.ts`
-con una llamada async a Supabase Edge Function. El código que llama no necesita cambios.
+### ✅ M14 — Perfil de usuario
+`app/(tabs)/profile.tsx`:
+- Avatar con `expo-image`, subida de foto via `expo-image-picker`
+- Stats reales, cursos comprados, selector de idioma
+- **Sección "Seguinos"**: links a Instagram, TikTok, X y web via `expo-linking`
+- Cerrar sesión con confirmación
+- `src/features/profile/services/profile.service.ts`: `updateProfile`, `uploadAvatar`
 
 ---
 
-## 4. Módulos Pendientes
+## 4. Extras y Bugfixes Post-M14
 
-### ✅ M13 — Home con datos reales de Supabase
-`app/(tabs)/index.tsx` actualmente es un placeholder. Reemplazarlo con:
-- Saludo personalizado con nombre del usuario (de `auth.store`)
-- Videos destacados — query a tabla `videos` de Supabase, ordenados por `created_at`
-- Mis cursos en progreso — join `purchases` + `user_progress` para mostrar % completado
-- Rutinas recientes de la comunidad — query a `routines` con `is_public = true`
-- Skeleton loaders mientras carga (componente `SkeletonCard`)
-Crear `src/services/home.service.ts` con las queries correspondientes.
+### ✅ Login con username
+- `signIn(emailOrUsername)`: si no tiene `@` → llama RPC `find_email_by_username` en Supabase
+- `signUp` guarda `username` en tabla `users` (campo ya existente en el schema)
+- Login screen: campo "Email o usuario", sin `keyboardType="email-address"`
+- Register screen: campo adicional de username con validación `/^[a-zA-Z0-9_]{3,20}$/`
+- TypeScript: `(supabase as any).rpc(...)` y `(supabase.from('users') as any).update(...)` necesarios por limitación del tipo generado con supabase-js v2.105.4
 
-### M14 — Perfil de usuario ← PRÓXIMO
-`app/(tabs)/profile.tsx` actualmente es un placeholder. Implementar:
-- Avatar con `expo-image`, upload a Supabase Storage con `expo-image-picker`
-- Nombre y email del usuario
-- Stats: cursos completados, rutinas creadas, tiempo total entrenado (de AsyncStorage)
-- Mis compras — lista de cursos adquiridos (de `purchases` store)
-- Selector de idioma (es/en) usando `changeLanguage` del language store
-- Botón cerrar sesión → `signOut()` + `resetPurchases()`
-Crear `src/services/profile.service.ts`.
+### ✅ Auth store robustez (pantalla blanca corregida)
+- Módulo-level `_initCalled` evita doble init de React StrictMode
+- Timeout 5s: si `getSession()` cuelga → signOut + `settle(null)` → UI desbloqueada
+- Validación expiración: si `session.expires_at < now` → `refreshSession()` silencioso
+- `settled` flag previene race conditions entre timeout y resolución normal
+- `try-catch` en `onAuthStateChange`: cualquier error → signOut automático
+- En `__DEV__`: `AppState.addEventListener` re-verifica sesión al volver al foreground
 
-### Extra — Login con Google OAuth
-Postergado del M5. Paquetes ya instalados: `expo-auth-session`, `expo-web-browser`.
-Pasos pendientes:
-1. Crear OAuth app en Google Cloud Console, obtener `CLIENT_ID`
-2. En Supabase Dashboard → Auth → Providers → Google → activar + pegar Client ID y Secret
-3. Agregar redirect URI: `volleytip://` en Google Cloud Console y en Supabase
-4. Implementar el flujo en `src/services/auth.service.ts` → `signInWithGoogle()`
-   (el método ya existe en `auth.store.ts`, solo falta conectarlo)
+### ✅ Social links en Perfil
+Sección "Seguinos" con Instagram, TikTok, X (Twitter) y sitio web.
+`expo-linking` para abrir URLs. Color cambia a cyan al presionar.
 
-### Extra — Logo real de VolleyTip
-Reemplazar assets placeholder con los definitivos:
-- `assets/images/icon.png` — ícono de app (1024×1024 px)
-- `assets/images/splash.png` — pantalla de splash
-- `assets/images/adaptive-icon.png` — ícono adaptativo Android (foreground sobre fondo `#111116`)
-El fondo del splash ya está configurado en `#111116` en `app.config.ts`.
-
-### Extra — Reemplazar datos mock con contenido real
-Cuando el contenido real esté cargado en Supabase:
-- `src/data/videos.mock.ts` → `src/services/videos.service.ts` hace query real a `videos`
-- `src/data/courses.mock.ts` → query a `courses` + `course_modules` + `module_items`
-- `src/data/routines.mock.ts` → query a `routines` + `routine_exercises`
-- `src/data/exercises.mock.ts` → query a `exercises`
-Estrategia sugerida: mantener los mocks como fallback si Supabase no tiene datos,
-usando `data ?? MOCK_DATA` en cada servicio.
+### ✅ Bugfixes generales
+- `allowsFullscreen` eliminado de `VideoView` (prop deprecated en expo-video)
+- Chips de categoría en modal de ejercicios: `flex: 1` + `flexShrink: 0` + `numberOfLines={1}`
+- Stats (Mis rutinas) se actualizan al volver al tab con `useFocusEffect`
+- "Contenido no encontrado" al ejecutar rutinas propias: `routine/[id].tsx` busca en AsyncStorage
+- Safe area top en `AddExerciseModal`: `paddingTop: insets.top` para que el botón no quede bajo la status bar en Android
 
 ---
 
 ## 5. Decisiones Técnicas Importantes
 
-### Pantalla blanca al iniciar (bug conocido — ya corregido)
-**Causa:** `supabase.auth.getSession().then(...)` sin `.catch()`. Si la promesa rechaza
-(sin red, URL vacía, storage corrupto), `initialized` nunca se pone en `true` y
-`_layout.tsx` retorna `null` permanentemente → pantalla blanca.
-**Fix aplicado:** `.catch(() => set({ initialized: true }))` en `auth.store.ts`.
-**Fix adicional:** `return null` → `return <View style={{ backgroundColor: '#111116' }} />`
-para eliminar el flash blanco durante la carga normal.
-**Si vuelve a pasar:** presionar `r` en Metro, o `npx expo start --clear`.
+### TypeScript con supabase-js v2.105.4
+Las funciones `rpc()` y `.from().update()` de Supabase requieren casteo `as any` cuando
+los tipos `Database['public']['Functions']` o las columnas no están correctamente inferidos.
+Esto es una limitación conocida de la versión actual del SDK, no un error de código.
 
 ### Expo Go vs Dev Build
-- El proyecto corre en **Expo Go** durante desarrollo
-- `react-native-purchases` (RevenueCat) requiere native code → usa **stub mode automático**:
-  `require('react-native-purchases')` en try/catch; si falla → `_sdk = null` → stubs activos
-- En stub mode, la compra simula 1.2s y retorna éxito → flujo de UI completo testeable sin dev build
-- Para pagos reales se necesita build con EAS: `npm run build:ios`
+- El proyecto corre en **Expo Dev Client** durante desarrollo
+- `react-native-purchases` (RevenueCat) requiere native code → stub mode automático
+- En stub mode, la compra simula 1.2s y retorna éxito → flujo UI completo testeable sin dev build
 
 ### Máquina de estados para workout/rutinas
 `useReducer` con fases `intro → exercise → rest → complete`.
-`restAfterLastSet: boolean` en el estado determina si al terminar el descanso
-avanza al siguiente ejercicio (true) o a la siguiente serie del mismo ejercicio (false).
-Esto evita la complejidad de manejar dos timers simultáneos.
-
-### Infinite render loop en courses/[id].tsx (ya corregido)
-`useDayStatuses(course)` recibía `{ weeks: [] }` como nuevo objeto en cada render
-cuando el curso no era `training_program` → `useEffect([course])` se re-ejecutaba infinitamente.
-**Fix:** constante módulo-nivel `const EMPTY_PROGRAM = { weeks: [] }` + `useMemo` para
-que la referencia solo cambie cuando `course` cambie.
+`restAfterLastSet: boolean` determina si al terminar el descanso avanza ejercicio o serie.
 
 ### Arquitectura de estado
-- **Zustand** para estado global (auth, language, purchases) — stores en `src/store/`
-- **AsyncStorage** para persistencia local: progreso de workouts, rutinas creadas por el usuario
-- **Supabase** como fuente de verdad del servidor: usuarios, compras, contenido
+- **Zustand** para estado global (auth, language, purchases)
+- **AsyncStorage** para persistencia local: progreso workouts, rutinas del usuario
+- **Supabase** como fuente de verdad del servidor
+- **TanStack Query** para server state con caché (staleTime 5min)
 
 ### Compras — Supabase como fuente de verdad
-RevenueCat procesa la transacción con el App Store; Supabase guarda el registro permanente.
-`fetchOwnedCourseIds` siempre lee de la tabla `purchases` de Supabase (no de RC).
-Esto permite que usuarios accedan a sus compras aunque RC esté caído o la cuenta cambie.
+`fetchOwnedCourseIds` siempre lee de tabla `purchases` de Supabase (no de RC).
 
 ### R2 — activación sin cambios de código
-`resolveVideoUrl` en `r2.ts` es transparente: si `R2_PUBLIC_URL` está vacío devuelve
-el fallback, si está configurado devuelve la URL de R2. Para activar en producción
-solo se agrega la variable de entorno y se suben los archivos. Cero cambios de código.
+Solo agregar `R2_PUBLIC_URL` en `.env.production` y subir archivos al bucket.
 
-### Suscripciones — estructura lista, no activada
-`SUBSCRIPTION_PRODUCT_IDS`, `checkActiveSubscription()` y `hasActiveSubscription` en el store
-están definidos y conectados. `hasActiveSubscription` siempre es `false` por ahora.
-Para activar suscripciones: solo cambiar `checkActiveSubscription()` para que verifique
-entitlements reales en RC. El resto del código (paywall, acceso) ya lo soporta.
-
-### Internacionalización
-Keys tipados: `t('nav.home')` da error de TypeScript si el key no existe en `en.ts`.
-`en.ts` es la fuente de tipos; `es.ts` implementa `typeof en` → TypeScript garantiza
-que ambos archivos estén sincronizados.
+### Infinite render loop en courses/[id].tsx (ya corregido)
+Constante módulo-nivel `EMPTY_PROGRAM = { weeks: [] }` + `useMemo` para estabilizar referencia.
 
 ---
 
 ## 6. Servicios Externos
 
 ### Supabase ✅ Configurado y funcionando
-- **Variables:** `SUPABASE_URL`, `SUPABASE_ANON_KEY` en `.env.*`
-- **Auth activo:** Email/Password ✅
+- **Auth activo:** Email/Password ✅, Username lookup ✅
 - **Auth pendiente:** Google OAuth ⏳
 - **RLS:** activado en todas las tablas
-- **Triggers:** 2 (ej: crear perfil en `users` al registrarse)
-- **Dashboard:** https://supabase.com/dashboard
+- **Triggers:** 2 (crear perfil en `users` al registrarse)
+- **SQL corrido en dev y prod:** username column + `find_email_by_username` RPC (Sección 9 del seed.sql)
 
 ### RevenueCat ⏳ SDK integrado — cuenta y productos pendientes
-- **Variables:** `REVENUECAT_IOS_KEY`, `REVENUECAT_ANDROID_KEY` en `.env.*`
 - **Instalar paquete:** `npx expo install react-native-purchases`
-- **Pasos pendientes en RC Dashboard:**
+- **Pasos pendientes:**
   1. Crear proyecto en app.revenuecat.com
   2. Configurar App Store Connect (iOS) y Google Play (Android)
-  3. Crear productos: un producto por curso con ID `volleytip_course_{courseId}`
-  4. (Futuro) Crear suscripciones: `volleytip_monthly` y `volleytip_annual`
-  5. Copiar API Keys a `.env.development` y `.env.production`
+  3. Crear productos: `volleytip_course_{courseId}` por cada curso
+  4. Copiar API Keys a `.env.development` y `.env.production`
 - **Bundle IDs:** dev `com.volleytip.app.dev`, prod `com.volleytip.app`
 
-### Cloudflare R2 ❌ No creado aún — código listo
-- **Variable:** `R2_PUBLIC_URL` en `.env.*` (vacío en dev → usa sample videos)
-- **Pasos pendientes:**
-  1. Crear cuenta Cloudflare si no existe
-  2. Activar R2 Storage → crear bucket `volleytip-videos`
-  3. Configurar CORS: `AllowedOrigins: ["*"]`, `AllowedMethods: ["GET"]`
-  4. Activar acceso público o crear custom domain `videos.volleytip.app`
-  5. Subir videos con los paths exactos de `video_key` (listados en M12 arriba)
-  6. Agregar `R2_PUBLIC_URL=https://videos.volleytip.app` a `.env.production`
-- **El código ya está listo** — solo falta el bucket y los archivos
+### Cloudflare R2 ❌ No creado — código listo
+- **Variable:** `R2_PUBLIC_URL` en `.env.*` (vacío en dev → usa sample videos de Google)
+- **Pasos:** crear bucket `volleytip-videos`, activar acceso público, subir videos con paths exactos de `video_key`, agregar `R2_PUBLIC_URL` a `.env.production`
 
 ---
 
@@ -391,131 +314,150 @@ volleytip-app/
 ├── app/
 │   ├── _layout.tsx              ← Root layout: fonts, i18n, auth, RC, purchases init
 │   ├── (auth)/
-│   │   ├── login.tsx
-│   │   ├── register.tsx
+│   │   ├── login.tsx            ← Login con email o username
+│   │   ├── register.tsx         ← Registro con email + username
 │   │   └── forgot-password.tsx
 │   ├── (tabs)/
 │   │   ├── _layout.tsx          ← Tab navigator (5 tabs)
-│   │   ├── index.tsx            ← Home (placeholder — M13 lo completa)
+│   │   ├── index.tsx            ← Home: stats, thumbnails, Supabase data, TanStack Query
 │   │   ├── videos/
-│   │   │   ├── index.tsx        ← Biblioteca de videos con search y filtros
+│   │   │   ├── index.tsx        ← Biblioteca con search y filtros
 │   │   │   └── [id].tsx         ← Reproductor con expo-video
 │   │   ├── courses/
-│   │   │   ├── index.tsx        ← Lista de cursos con search y filtros
-│   │   │   └── [id].tsx         ← Detalle con WeekAccordion + paywall integrado
+│   │   │   ├── index.tsx        ← Lista de cursos
+│   │   │   └── [id].tsx         ← Detalle con WeekAccordion + paywall
 │   │   ├── routines/
-│   │   │   └── index.tsx        ← Comunidad / Guardadas / Mis rutinas (3 tabs)
-│   │   └── profile.tsx          ← Perfil (placeholder — M14 lo completa)
-│   ├── workout/[id].tsx         ← Ejecución de día de programa (máquina de estados)
-│   ├── routine/[id].tsx         ← Ejecución de rutina libre (misma máquina)
-│   └── routine-builder.tsx      ← Creador de rutinas con modal de ejercicios
+│   │   │   └── index.tsx        ← Comunidad / Guardadas / Mis rutinas
+│   │   └── profile.tsx          ← Perfil, avatar, stats, social links
+│   ├── workout/[id].tsx         ← Ejecución día de programa (máquina de estados)
+│   ├── routine/[id].tsx         ← Ejecución rutina libre
+│   └── routine-builder.tsx      ← Creador de rutinas con steppers, badges, preview video
 │
 ├── src/
-│   ├── components/
-│   │   ├── ui/                  ← Text, Button, Card, Chip, ProgressBar, ScreenHeader, Badge
-│   │   ├── videos/VideoCard.tsx
-│   │   ├── courses/CourseCard.tsx
-│   │   ├── routines/RoutineCard.tsx
-│   │   └── paywall/CoursePaywall.tsx
+│   ├── components/ui/           ← Text, Button, Card, Chip, ProgressBar, SkeletonLoader
 │   ├── data/
 │   │   ├── videos.mock.ts       ← 9 videos con video_key y thumbnail_key para R2
 │   │   ├── courses.mock.ts      ← 3 cursos (2 programas + 1 colección)
 │   │   ├── routines.mock.ts     ← 5 rutinas de comunidad
-│   │   └── exercises.mock.ts    ← 30 ejercicios en 6 categorías
-│   ├── hooks/
-│   │   └── useProtectedRoute.ts ← Redirección automática login ↔ tabs
-│   ├── i18n/
-│   │   ├── index.ts             ← Init i18next, loadSavedLanguage, changeLanguage
-│   │   └── locales/
-│   │       ├── en.ts            ← Fuente de tipos para keys tipados
-│   │       └── es.ts            ← Implementa typeof en
+│   │   └── exercises.mock.ts    ← 30 ejercicios con muscle_group asignado
+│   ├── features/
+│   │   ├── home/                ← TanStack Query hooks, home.service.ts, types
+│   │   └── profile/             ← profile.service.ts (updateProfile, uploadAvatar)
 │   ├── lib/
-│   │   ├── supabase.ts          ← Cliente Supabase con AsyncStorage
-│   │   ├── config.ts            ← Lee Constants.expoConfig.extra (supabase, RC, R2)
-│   │   ├── revenuecat.ts        ← SDK wrapper con stub mode automático para Expo Go
-│   │   └── r2.ts                ← resolveVideoUrl / resolveThumbnailUrl para Cloudflare R2
-│   ├── services/
-│   │   ├── auth.service.ts      ← signIn, signUp, signOut, fetchUserProfile
-│   │   ├── videos.service.ts    ← getVideoById, getAllVideos, getRelatedVideos
-│   │   ├── courses.service.ts   ← getAllCourses, getCourseById, getWorkoutDay
-│   │   ├── routines.service.ts  ← getCommunityRoutines, getSavedRoutines, getRoutineById
-│   │   └── purchases.service.ts ← fetchOwnedCourseIds, recordPurchase (Supabase)
+│   │   ├── supabase.ts          ← Cliente con AsyncStorage
+│   │   ├── config.ts            ← Lee expoConfig.extra
+│   │   ├── revenuecat.ts        ← Wrapper SDK con stub mode
+│   │   ├── r2.ts                ← resolveVideoUrl / resolveThumbnailUrl
+│   │   ├── query-client.ts      ← QueryClient singleton (staleTime 5min)
+│   │   └── activity.ts          ← recordActivityDate() + calculateStreak()
 │   ├── store/
-│   │   ├── index.ts             ← Re-exports: useAuthStore, useLanguageStore, usePurchasesStore
-│   │   ├── auth.store.ts        ← session, user, initialized, initialize (con .catch failsafe)
-│   │   ├── language.store.ts    ← language, setLanguage, syncFromI18n
-│   │   └── purchases.store.ts   ← ownedCourseIds, hasAccess, buyCourse, restorePurchases
-│   ├── theme/
-│   │   ├── colors.ts
-│   │   ├── typography.ts
-│   │   ├── spacing.ts
-│   │   └── radius.ts
-│   └── types/
-│       └── database.types.ts    ← Tipado completo de Supabase (14 tablas + helpers)
+│   │   ├── auth.store.ts        ← Session, user, initialize con timeout + robustez
+│   │   ├── language.store.ts    ← language, setLanguage
+│   │   └── purchases.store.ts   ← ownedCourseIds, hasAccess, buyCourse
+│   ├── services/
+│   │   ├── auth.service.ts      ← signIn (email o username), signUp, signOut, fetchUserProfile
+│   │   ├── videos.service.ts
+│   │   ├── courses.service.ts
+│   │   ├── routines.service.ts
+│   │   └── purchases.service.ts
+│   ├── theme/                   ← colors, typography, spacing, radius
+│   ├── i18n/locales/
+│   │   ├── en.ts                ← Fuente de tipos
+│   │   └── es.ts                ← Implementa typeof en
+│   └── types/database.types.ts  ← 14 tablas + helpers + Functions (find_email_by_username)
 │
-├── app.config.ts                ← Multi-env (dev/prod), plugins, extra credentials
-├── .env.development             ← NO en git — SUPABASE_*, REVENUECAT_*, R2_*
-├── .env.production              ← NO en git — mismas variables, valores de producción
-├── package.json
-├── tsconfig.json
-└── PROGRESS.md                  ← Este archivo
+├── supabase/seed.sql            ← Schema completo + datos mock + SQL de username (Sección 9)
+├── app.config.ts                ← Multi-env, plugins, extra credentials
+├── .env.development             ← NO en git
+├── .env.production              ← NO en git
+└── PROGRESS.md
 ```
 
 ---
 
 ## 8. Al Retomar — Leer Esto Primero
 
-### Próximo módulo: M13 — Home con datos reales
-`app/(tabs)/index.tsx` es placeholder. Construir home real con:
-- Videos destacados desde Supabase
-- Cursos en progreso del usuario
-- Rutinas recientes de la comunidad
-- Bienvenida personalizada
-
 ### Comandos para correr el proyecto
 ```bash
-npm start          # Expo Go, ambiente development
-npm start:prod     # Expo Go, ambiente production
-npm run build:ios  # EAS build para iOS (requiere cuenta Expo)
-npx tsc --noEmit   # Verificar tipos TypeScript
+npm start                # Expo Dev Client, ambiente development
+npm run start:go         # Expo Go (fallback, sin native modules)
+npm run build:android:dev  # Nuevo APK de desarrollo vía EAS
+npx tsc --noEmit         # Verificar tipos TypeScript
 ```
 
 ### Variables de entorno (.env.development)
 ```
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-REVENUECAT_IOS_KEY=          # Vacío hasta crear cuenta RC → stub mode activo
-REVENUECAT_ANDROID_KEY=      # Vacío hasta crear cuenta RC → stub mode activo
-R2_PUBLIC_URL=               # Vacío en dev → usa sample videos de Google como fallback
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+REVENUECAT_IOS_KEY=          # Vacío → stub mode activo
+REVENUECAT_ANDROID_KEY=      # Vacío → stub mode activo
+R2_PUBLIC_URL=               # Vacío en dev → usa sample videos de Google
 ```
 
 ### Si la app aparece en pantalla blanca
-1. Presionar `r` en la terminal de Metro para forzar reload del bundle en el dispositivo
-2. Si persiste: `npx expo start --clear` y volver a escanear el QR
-3. Si sigue: verificar que `.env.development` existe y tiene `SUPABASE_URL` y `SUPABASE_ANON_KEY`
+1. Presionar `r` en Metro para reload
+2. Si persiste: `npx expo start --clear`
+3. Si sigue: verificar que `.env.development` existe con `SUPABASE_URL` y `SUPABASE_ANON_KEY`
+4. El auth store tiene timeout de 5s y manejo de errores robusto — nunca debería quedar colgado
 
-### Estado actual de cada pantalla
+### Estado de cada pantalla
 | Pantalla | Estado | Notas |
 |---|---|---|
-| Login / Register / Forgot password | ✅ Funcional | Auth real con Supabase |
-| Videos — biblioteca | ✅ Funcional | Datos mock, player funciona |
-| Videos — reproductor | ✅ Funcional | expo-video, pausa al salir |
-| Cursos — lista | ✅ Funcional | Datos mock |
-| Cursos — detalle + paywall | ✅ Funcional | Paywall en stub mode (simula compra) |
-| Workout — ejecución | ✅ Funcional | Máquina de estados completa |
-| Rutinas — lista | ✅ Funcional | 3 tabs, búsqueda, likes |
-| Rutina libre — ejecución | ✅ Funcional | Misma máquina que workout |
-| Creador de rutinas | ✅ Funcional | Guarda en AsyncStorage |
-| Home | ⚠️ Placeholder | M13 lo completa con datos reales |
-| Perfil | ⚠️ Placeholder | M14 lo completa |
+| Login | ✅ | Email o username, Google OAuth pendiente |
+| Register | ✅ | Con campo username (3-20 chars, solo letras/números/_) |
+| Forgot Password | ✅ | — |
+| Home | ✅ | Thumbnails visibles, datos Supabase, TanStack Query |
+| Videos — biblioteca | ✅ | Mock data, player funciona |
+| Videos — reproductor | ✅ | expo-video, pausa al salir |
+| Cursos — lista | ✅ | Mock data |
+| Cursos — detalle + paywall | ✅ | Paywall en stub mode |
+| Workout — ejecución | ✅ | Máquina de estados completa |
+| Rutinas — lista | ✅ | 3 tabs, búsqueda, likes |
+| Rutina libre — ejecución | ✅ | Busca en AsyncStorage para rutinas propias |
+| Creador de rutinas | ✅ | Steppers sets/reps/tiempo/descanso, badges músculo, preview video, toggle para quitar |
+| Perfil | ✅ | Avatar upload, stats, cursos comprados, idioma, social links |
 
 ### Qué usa datos reales de Supabase vs mock
 | Dato | Fuente actual | Fuente final |
 |---|---|---|
 | Usuarios / sesiones | ✅ Supabase Auth | — |
 | Compras de cursos | ✅ Supabase `purchases` | — |
-| Videos | ⚠️ Mock | Supabase `videos` (Extra) |
-| Cursos | ⚠️ Mock | Supabase `courses` (Extra) |
-| Rutinas comunidad | ⚠️ Mock | Supabase `routines` (Extra) |
-| Ejercicios | ⚠️ Mock | Supabase `exercises` (Extra) |
+| Videos | ⚠️ Mock | Supabase `videos` |
+| Cursos | ⚠️ Mock | Supabase `courses` |
+| Rutinas comunidad | ⚠️ Mock | Supabase `routines` |
+| Ejercicios | ⚠️ Mock | Supabase `exercises` |
 | Progreso workouts | ⚠️ AsyncStorage | Supabase `user_progress` (futuro) |
+
+---
+
+## 9. Próximas Tareas Disponibles
+
+### Extra — Google OAuth
+Paquetes instalados: `expo-auth-session`, `expo-web-browser`. Código en `auth.service.ts` ya escrito.
+Pasos pendientes:
+1. Crear OAuth app en Google Cloud Console → obtener Client ID
+2. Supabase Dashboard → Auth → Providers → Google → activar + pegar credenciales
+3. Agregar redirect URI `volleytip://` en Google Cloud Console y en Supabase
+
+### Extra — Datos reales en Supabase
+Estrategia: cada servicio hace query real y usa `data ?? MOCK_DATA` como fallback.
+Archivos a migrar: `videos.service.ts`, `courses.service.ts`, `routines.service.ts`, `exercises.mock.ts`.
+El seed.sql tiene el schema completo + datos mock para poblar Supabase.
+
+### Extra — RevenueCat
+1. `npx expo install react-native-purchases`
+2. Crear cuenta y productos en app.revenuecat.com
+3. Copiar API Keys al `.env`
+4. Nuevo EAS build para Android (el stub mode funciona en Dev Client pero RC real necesita native build)
+
+### Extra — Cloudflare R2
+Subir videos reales con los paths de `video_key` en `videos.mock.ts` y activar `R2_PUBLIC_URL`.
+
+### Extra — Logo y assets definitivos
+- `assets/images/icon.png` (1024×1024)
+- `assets/images/splash.png`
+- `assets/images/adaptive-icon.png` (foreground sobre `#111116`)
+
+### Extra — Supabase Storage bucket 'avatars'
+Crear en Supabase Dashboard → Storage para que funcione el upload de avatars en la pantalla de Perfil.
+Nuevo APK dev necesario para que los permisos de `expo-image-picker` funcionen en Android.

@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   TextInput,
   View,
@@ -12,13 +13,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { VideoCard } from '../../../src/components/videos/VideoCard';
+import { Chip, SkeletonLoader, Text } from '../../../src/components/ui';
 import { VideoItem } from '../../../src/data/videos.mock';
-import { getCategories, getVideos } from '../../../src/services/videos.service';
-import { Text } from '../../../src/components/ui';
-import { Chip } from '../../../src/components/ui/Chip';
+import { useVideos } from '../../../src/features/videos/hooks/useVideosData';
+import { getCategories } from '../../../src/services/videos.service';
+import { queryClient } from '../../../src/lib/query-client';
 import { colors, fontFamily, fontSize, radius, spacing } from '../../../src/theme';
 
 const LEVELS = ['basico', 'intermedio', 'avanzado'] as const;
+const CATEGORIES = getCategories();
 
 export default function VideosScreen() {
   const { t }  = useTranslation();
@@ -28,12 +31,11 @@ export default function VideosScreen() {
   const [category, setCategory] = useState('');
   const [level,    setLevel]    = useState('');
 
-  const categories = useMemo(() => getCategories(), []);
-
-  const videos = useMemo(
-    () => getVideos({ search, categorySlug: category || undefined, level: level || undefined }),
-    [search, category, level],
-  );
+  const { data: videos, isLoading, refetch } = useVideos({
+    categorySlug: category || undefined,
+    level:        level    || undefined,
+    search:       search   || undefined,
+  });
 
   function renderItem({ item }: { item: VideoItem }) {
     return (
@@ -75,7 +77,7 @@ export default function VideosScreen() {
       {/* Category chips */}
       <FlatList
         horizontal
-        data={categories}
+        data={CATEGORIES}
         keyExtractor={(item) => item.slug}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chipsRow}
@@ -98,11 +100,7 @@ export default function VideosScreen() {
 
       {/* Level chips */}
       <View style={styles.levelRow}>
-        <Chip
-          label={t('videos.levels.all')}
-          active={level === ''}
-          onPress={() => setLevel('')}
-        />
+        <Chip label={t('videos.levels.all')} active={level === ''} onPress={() => setLevel('')} />
         {LEVELS.map((lv) => (
           <Chip
             key={lv}
@@ -114,24 +112,42 @@ export default function VideosScreen() {
       </View>
 
       {/* Video grid */}
-      <FlatList
-        style={styles.videoList}
-        data={videos}
-        numColumns={2}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        columnWrapperStyle={styles.columnWrapper}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="search-outline" size={40} color={colors.textTertiary} />
-            <Text variant="bodySmall" color={colors.textSecondary} align="center">
-              {t('videos.noResults')}
-            </Text>
-          </View>
-        }
-      />
+      {isLoading ? (
+        <View style={styles.skeletonGrid}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonLoader key={i} height={160} style={styles.skeletonCard} />
+          ))}
+        </View>
+      ) : (
+        <FlatList
+          style={styles.videoList}
+          data={videos ?? []}
+          numColumns={2}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          columnWrapperStyle={styles.columnWrapper}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => {
+                queryClient.invalidateQueries({ queryKey: ['videos'] });
+                refetch();
+              }}
+              tintColor={colors.accent}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="search-outline" size={40} color={colors.textTertiary} />
+              <Text variant="bodySmall" color={colors.textSecondary} align="center">
+                {t('videos.noResults')}
+              </Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -145,7 +161,6 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
 
-  // Search
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -168,7 +183,6 @@ const styles = StyleSheet.create({
     height: '100%',
   },
 
-  // Chips
   chipsScroll: { flexGrow: 0 },
   chipsRow: {
     gap: spacing.sm,
@@ -183,18 +197,17 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
 
-  // Video list
-  videoList: { flex: 1 },
-
-  // Grid
-  columnWrapper: {
+  skeletonGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.md,
     paddingHorizontal: spacing.screen,
   },
-  listContent: {
-    gap: spacing.md,
-    paddingBottom: spacing['3xl'],
-  },
+  skeletonCard: { width: '47%', borderRadius: 12 },
+
+  videoList: { flex: 1 },
+  columnWrapper: { gap: spacing.md, paddingHorizontal: spacing.screen },
+  listContent:   { gap: spacing.md, paddingBottom: spacing['3xl'] },
 
   empty: {
     alignItems: 'center',

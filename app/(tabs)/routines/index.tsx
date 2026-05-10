@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   TextInput,
   View,
@@ -17,10 +18,12 @@ import { Chip } from '../../../src/components/ui/Chip';
 import { Text } from '../../../src/components/ui';
 import { Routine } from '../../../src/data/routines.mock';
 import {
-  getCommunityRoutines,
   getSavedRoutines,
   RoutinesSortKey,
 } from '../../../src/services/routines.service';
+import { useCommunityRoutines } from '../../../src/features/routines/hooks/useRoutinesData';
+import { SkeletonLoader } from '../../../src/components/ui';
+import { queryClient } from '../../../src/lib/query-client';
 import { colors, fontFamily, fontSize, radius, spacing } from '../../../src/theme';
 
 type Section = 'community' | 'saved' | 'mine';
@@ -63,18 +66,21 @@ export default function RoutinesScreen() {
     });
   }
 
-  const communityRoutines = useMemo(
-    () => getCommunityRoutines({ search: search || undefined }, sort),
-    [search, sort],
-  );
+  const { data: communityData, isLoading: communityLoading, refetch } = useCommunityRoutines(sort);
 
-  const savedRoutines = useMemo(() => getSavedRoutines(), []);
+  const communityRoutines = (communityData ?? []).filter((r) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.title.toLowerCase().includes(q);
+  });
 
-  const routines: Routine[] = useMemo(() => {
-    if (section === 'mine')  return myRoutines;
-    if (section === 'saved') return savedRoutines;
-    return communityRoutines;
-  }, [section, myRoutines, savedRoutines, communityRoutines]);
+  const savedRoutines = getSavedRoutines();
+
+  const routines: Routine[] = section === 'mine'
+    ? myRoutines
+    : section === 'saved'
+    ? savedRoutines
+    : communityRoutines;
 
   const emptyText = {
     community: t('routines.emptyCommunity'),
@@ -134,7 +140,7 @@ export default function RoutinesScreen() {
           <Ionicons name="search-outline" size={18} color={colors.textTertiary} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Buscar rutinas..."
+            placeholder={t('routines.search')}
             placeholderTextColor={colors.textTertiary}
             value={search}
             onChangeText={setSearch}
@@ -164,7 +170,17 @@ export default function RoutinesScreen() {
         </View>
       )}
 
+      {/* Skeleton for community */}
+      {section === 'community' && communityLoading && (
+        <View style={styles.skeletons}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonLoader key={i} height={90} style={{ borderRadius: 12 }} />
+          ))}
+        </View>
+      )}
+
       {/* List */}
+      {!(section === 'community' && communityLoading) && (
       <FlatList
         data={routines}
         keyExtractor={(item) => item.id}
@@ -172,6 +188,13 @@ export default function RoutinesScreen() {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+        refreshControl={section === 'community' ? (
+          <RefreshControl
+            refreshing={false}
+            onRefresh={() => { queryClient.invalidateQueries({ queryKey: ['routines'] }); refetch(); }}
+            tintColor={colors.accent}
+          />
+        ) : undefined}
         ListEmptyComponent={
           <View style={styles.empty}>
             {section === 'mine' ? (
@@ -194,6 +217,7 @@ export default function RoutinesScreen() {
           </View>
         }
       />
+      )}
     </SafeAreaView>
   );
 }
@@ -278,6 +302,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.screen,
     paddingBottom: spacing.md,
+  },
+
+  skeletons: {
+    gap: spacing.md,
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.sm,
   },
 
   // List

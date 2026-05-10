@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Alert,
@@ -18,6 +18,8 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useVideoPlayer, VideoView } from 'expo-video';
+
 import { Text } from '../src/components/ui';
 import {
   EXERCISE_CATEGORIES,
@@ -25,6 +27,8 @@ import {
   ExerciseItem,
   MOCK_EXERCISES,
 } from '../src/data/exercises.mock';
+import { MOCK_VIDEOS } from '../src/data/videos.mock';
+import { resolveVideoUrl } from '../src/lib/r2';
 import { colors, fontFamily, fontSize, radius, spacing } from '../src/theme';
 
 // ── Builder state ──────────────────────────────────────────────────────────
@@ -33,6 +37,9 @@ interface BuilderExercise {
   uid:      string; // unique per row (same exercise can be added twice)
   exercise: ExerciseItem;
   sets:     number;
+  reps:     number;
+  duration: number; // seconds/set — only used when exercise is timed
+  rest:     number; // rest seconds after each set
 }
 
 interface BuilderState {
@@ -46,7 +53,10 @@ type BuilderAction =
   | { type: 'TOGGLE_PUBLIC' }
   | { type: 'ADD_EXERCISE';    exercise: ExerciseItem }
   | { type: 'REMOVE_EXERCISE'; uid: string }
-  | { type: 'SET_SETS';        uid: string; sets: number }
+  | { type: 'SET_SETS';        uid: string; sets:     number }
+  | { type: 'SET_REPS';        uid: string; reps:     number }
+  | { type: 'SET_DURATION';    uid: string; duration: number }
+  | { type: 'SET_REST';        uid: string; rest:     number }
   | { type: 'MOVE_UP';         uid: string }
   | { type: 'MOVE_DOWN';       uid: string };
 
@@ -67,6 +77,9 @@ function builderReducer(state: BuilderState, action: BuilderAction): BuilderStat
         uid:      `uid-${++uidCounter}`,
         exercise: action.exercise,
         sets:     action.exercise.default_sets,
+        reps:     action.exercise.default_reps,
+        duration: action.exercise.default_duration_seconds,
+        rest:     action.exercise.default_rest_seconds,
       };
       return { ...state, exercises: [...state.exercises, row] };
     }
@@ -79,6 +92,33 @@ function builderReducer(state: BuilderState, action: BuilderAction): BuilderStat
         ...state,
         exercises: state.exercises.map((e) =>
           e.uid === action.uid ? { ...e, sets: Math.max(1, Math.min(10, action.sets)) } : e,
+        ),
+      };
+    }
+
+    case 'SET_REPS': {
+      return {
+        ...state,
+        exercises: state.exercises.map((e) =>
+          e.uid === action.uid ? { ...e, reps: Math.max(1, Math.min(100, action.reps)) } : e,
+        ),
+      };
+    }
+
+    case 'SET_DURATION': {
+      return {
+        ...state,
+        exercises: state.exercises.map((e) =>
+          e.uid === action.uid ? { ...e, duration: Math.max(5, Math.min(300, action.duration)) } : e,
+        ),
+      };
+    }
+
+    case 'SET_REST': {
+      return {
+        ...state,
+        exercises: state.exercises.map((e) =>
+          e.uid === action.uid ? { ...e, rest: Math.max(0, Math.min(300, action.rest)) } : e,
         ),
       };
     }
@@ -109,25 +149,130 @@ function builderReducer(state: BuilderState, action: BuilderAction): BuilderStat
 function estimateMinutes(exercises: BuilderExercise[]): number {
   if (exercises.length === 0) return 0;
   const totalSecs = exercises.reduce((acc, row) => {
-    const ex = row.exercise;
-    const perSet = ex.default_duration_seconds > 0 ? ex.default_duration_seconds : ex.default_reps * 3;
-    return acc + row.sets * (perSet + ex.default_rest_seconds);
+    const perSet = row.duration > 0 ? row.duration : row.reps * 3;
+    return acc + row.sets * (perSet + row.rest);
   }, 0);
   return Math.max(1, Math.ceil(totalSecs / 60));
 }
 
+// ── Muscle group helpers ──────────────────────────────────────────────────
+
+function getMuscleGroupMeta(group: string | null | undefined): {
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  label: string;
+} | null {
+  if (!group) return null;
+  const g = group.toLowerCase();
+  if (g.includes('pierna') || g.includes('isquio') || g.includes('glut') || g.includes('cadera') || g.includes('pantorr') || g.includes('tobillo')) {
+    return { icon: 'walk-outline',         color: '#2B8DB8', label: 'Piernas' };
+  }
+  if (g.includes('core') || g.includes('abdom') || g.includes('lumbar')) {
+    return { icon: 'fitness-outline',      color: '#C4973A', label: 'Core' };
+  }
+  if (g.includes('hombro')) {
+    return { icon: 'barbell-outline',      color: '#9B4EC4', label: 'Hombros' };
+  }
+  if (g.includes('brazo') || g.includes('muñeca') || g.includes('bicep') || g.includes('tricep')) {
+    return { icon: 'hand-right-outline',   color: '#38B88C', label: 'Brazos' };
+  }
+  if (g.includes('espalda') || g.includes('dorsal') || g.includes('torac')) {
+    return { icon: 'body-outline',         color: '#C44E38', label: 'Espalda' };
+  }
+  return { icon: 'accessibility-outline', color: '#00CFCF', label: 'Cuerpo' };
+}
+
+function MuscleGroupBadge({ muscleGroup }: { muscleGroup?: string | null }) {
+  const meta = getMuscleGroupMeta(muscleGroup);
+  if (!meta) return null;
+  return (
+    <View style={[badgeStyles.pill, { backgroundColor: meta.color + '28' }]}>
+      <Ionicons name={meta.icon} size={10} color={meta.color} />
+      <Text style={[badgeStyles.text, { color: meta.color }]}>{meta.label}</Text>
+    </View>
+  );
+}
+
+const badgeStyles = StyleSheet.create({
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+  },
+  text: {
+    fontFamily: fontFamily.medium,
+    fontSize: 9,
+    letterSpacing: 0.3,
+  },
+});
+
+// ── Video preview modal ───────────────────────────────────────────────────
+
+function VideoPreviewModal({ visible, videoUrl, onClose }: {
+  visible:  boolean;
+  videoUrl: string | null;
+  onClose:  () => void;
+}) {
+  const player = useVideoPlayer(videoUrl ?? null, (p) => { p.loop = true; });
+
+  useEffect(() => {
+    if (visible && videoUrl) player.play();
+    else player.pause();
+  }, [visible, videoUrl]);
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={previewStyles.container}>
+        <Pressable style={previewStyles.closeBtn} onPress={onClose} hitSlop={12}>
+          <Ionicons name="close" size={24} color={colors.textPrimary} />
+        </Pressable>
+        <VideoView
+          player={player}
+          style={previewStyles.player}
+          contentFit="contain"
+          nativeControls
+        />
+      </View>
+    </Modal>
+  );
+}
+
+const previewStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
+  closeBtn: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  player: { width: '100%', height: 280 },
+});
+
 // ── Add exercise modal ─────────────────────────────────────────────────────
 
 interface AddExerciseModalProps {
-  visible:          boolean;
-  onClose:          () => void;
-  onAdd:            (exercise: ExerciseItem) => void;
-  alreadyAdded:     Set<string>;
+  visible:      boolean;
+  onClose:      () => void;
+  onAdd:        (exercise: ExerciseItem) => void;
+  onRemove:     (exerciseId: string) => void;
+  alreadyAdded: Set<string>;
 }
 
-function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExerciseModalProps) {
-  const [search,   setSearch]   = useState('');
-  const [category, setCategory] = useState<ExerciseCategory | 'all'>('all');
+function AddExerciseModal({ visible, onClose, onAdd, onRemove, alreadyAdded }: AddExerciseModalProps) {
+  const { t }  = useTranslation();
+  const [search,          setSearch]          = useState('');
+  const [category,        setCategory]        = useState<ExerciseCategory | 'all'>('all');
+  const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
 
   const filtered = useMemo(() => {
@@ -143,6 +288,7 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
   function handleClose() {
     setSearch('');
     setCategory('all');
+    setPreviewVideoUrl(null);
     onClose();
   }
 
@@ -153,15 +299,15 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
       presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View style={[modalStyles.container, { paddingBottom: insets.bottom }]}>
+      <View style={[modalStyles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         {/* Handle bar */}
         <View style={modalStyles.handle} />
 
         {/* Header */}
         <View style={modalStyles.header}>
-          <Text style={modalStyles.title}>Agregar ejercicio</Text>
-          <Pressable onPress={handleClose} hitSlop={8}>
-            <Ionicons name="close" size={22} color={colors.textSecondary} />
+          <Text style={modalStyles.title}>{t('routines.builder.addExercise')}</Text>
+          <Pressable onPress={handleClose} hitSlop={8} style={modalStyles.doneBtn}>
+            <Text style={modalStyles.doneBtnText}>{t('routines.builder.done')}</Text>
           </Pressable>
         </View>
 
@@ -170,7 +316,7 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
           <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
           <TextInput
             style={modalStyles.searchInput}
-            placeholder="Buscar ejercicio..."
+            placeholder={t('routines.builder.searchExercises')}
             placeholderTextColor={colors.textTertiary}
             value={search}
             onChangeText={setSearch}
@@ -187,7 +333,7 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
         {/* Category chips */}
         <FlatList
           horizontal
-          data={[{ key: 'all', label: 'Todos', icon: 'grid-outline' }, ...EXERCISE_CATEGORIES]}
+          data={[{ key: 'all', label: t('common.all'), icon: 'grid-outline' }, ...EXERCISE_CATEGORIES]}
           keyExtractor={(item) => item.key}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={modalStyles.categoryRow}
@@ -201,7 +347,7 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
                 size={13}
                 color={category === item.key ? colors.bgPrimary : colors.textSecondary}
               />
-              <Text style={[modalStyles.categoryChipText, category === item.key && modalStyles.categoryChipTextActive]}>
+              <Text style={[modalStyles.categoryChipText, category === item.key && modalStyles.categoryChipTextActive]} numberOfLines={1}>
                 {item.label}
               </Text>
             </Pressable>
@@ -211,19 +357,25 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
 
         {/* Exercise list */}
         <FlatList
+          style={modalStyles.exerciseList}
           data={filtered}
           keyExtractor={(item) => item.id}
           contentContainerStyle={modalStyles.listContent}
           ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
           renderItem={({ item }) => {
             const added = alreadyAdded.has(item.id);
+            const mockVideo = item.video_id ? MOCK_VIDEOS.find((v) => v.id === item.video_id) : null;
+            const videoUrl  = mockVideo ? resolveVideoUrl(mockVideo.video_url, mockVideo.video_key) : null;
             return (
               <Pressable
                 style={({ pressed }) => [modalStyles.exRow, pressed && { opacity: 0.75 }]}
-                onPress={() => { onAdd(item); }}
+                onPress={() => { added ? onRemove(item.id) : onAdd(item); }}
               >
                 <View style={modalStyles.exInfo}>
-                  <Text style={modalStyles.exName}>{item.name}</Text>
+                  <View style={modalStyles.exNameRow}>
+                    <Text style={modalStyles.exName} numberOfLines={1}>{item.name}</Text>
+                    <MuscleGroupBadge muscleGroup={item.muscle_group} />
+                  </View>
                   <Text style={modalStyles.exMeta}>
                     {item.default_duration_seconds > 0
                       ? `${item.default_sets} × ${item.default_duration_seconds}s`
@@ -231,21 +383,39 @@ function AddExerciseModal({ visible, onClose, onAdd, alreadyAdded }: AddExercise
                     {' · '}{item.default_rest_seconds}s desc.
                   </Text>
                 </View>
-                <View style={[modalStyles.addBtn, added && modalStyles.addBtnAdded]}>
-                  <Ionicons
-                    name={added ? 'checkmark' : 'add'}
-                    size={18}
-                    color={added ? colors.success : colors.accent}
-                  />
+                <View style={modalStyles.exActions}>
+                  {videoUrl && (
+                    <Pressable
+                      onPress={() => setPreviewVideoUrl(videoUrl)}
+                      hitSlop={8}
+                      style={modalStyles.previewVideoBtn}
+                    >
+                      <Ionicons name="play-circle-outline" size={22} color={colors.accent} />
+                    </Pressable>
+                  )}
+                  <View style={[modalStyles.addBtn, added && modalStyles.addBtnAdded]}>
+                    <Ionicons
+                      name={added ? 'checkmark' : 'add'}
+                      size={18}
+                      color={added ? colors.success : colors.accent}
+                    />
+                  </View>
+
                 </View>
               </Pressable>
             );
           }}
           ListEmptyComponent={
             <View style={modalStyles.emptyWrap}>
-              <Text style={modalStyles.emptyText}>No se encontraron ejercicios</Text>
+              <Text style={modalStyles.emptyText}>{t('routines.builder.noExercisesFound')}</Text>
             </View>
           }
+        />
+
+        <VideoPreviewModal
+          visible={previewVideoUrl !== null}
+          videoUrl={previewVideoUrl}
+          onClose={() => setPreviewVideoUrl(null)}
         />
       </View>
     </Modal>
@@ -262,68 +432,145 @@ interface ExRowProps {
 }
 
 function ExerciseRow({ row, isFirst, isLast, dispatch }: ExRowProps) {
+  const { t } = useTranslation();
   const ex = row.exercise;
+  const isDuration = ex.default_duration_seconds > 0;
 
   return (
     <View style={rowStyles.card}>
-      {/* Reorder arrows */}
-      <View style={rowStyles.arrows}>
+      {/* Row 1: arrows · name/meta · trash */}
+      <View style={rowStyles.topRow}>
+        <View style={rowStyles.arrows}>
+          <Pressable
+            onPress={() => dispatch({ type: 'MOVE_UP', uid: row.uid })}
+            disabled={isFirst}
+            hitSlop={4}
+            style={[rowStyles.arrowBtn, isFirst && rowStyles.arrowDisabled]}
+          >
+            <Ionicons name="chevron-up" size={16} color={isFirst ? colors.textTertiary : colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            onPress={() => dispatch({ type: 'MOVE_DOWN', uid: row.uid })}
+            disabled={isLast}
+            hitSlop={4}
+            style={[rowStyles.arrowBtn, isLast && rowStyles.arrowDisabled]}
+          >
+            <Ionicons name="chevron-down" size={16} color={isLast ? colors.textTertiary : colors.textSecondary} />
+          </Pressable>
+        </View>
+
+        <View style={rowStyles.info}>
+          <Text style={rowStyles.name} numberOfLines={1}>{ex.name}</Text>
+          <View style={rowStyles.metaRow}>
+            <Text style={rowStyles.meta}>
+              {isDuration
+                ? `${ex.default_duration_seconds}s/serie · `
+                : ''}{ex.default_rest_seconds}s desc.
+            </Text>
+            <MuscleGroupBadge muscleGroup={ex.muscle_group} />
+          </View>
+        </View>
+
         <Pressable
-          onPress={() => dispatch({ type: 'MOVE_UP', uid: row.uid })}
-          disabled={isFirst}
-          hitSlop={4}
-          style={[rowStyles.arrowBtn, isFirst && rowStyles.arrowDisabled]}
+          onPress={() => dispatch({ type: 'REMOVE_EXERCISE', uid: row.uid })}
+          hitSlop={8}
+          style={rowStyles.removeBtn}
         >
-          <Ionicons name="chevron-up" size={16} color={isFirst ? colors.textTertiary : colors.textSecondary} />
-        </Pressable>
-        <Pressable
-          onPress={() => dispatch({ type: 'MOVE_DOWN', uid: row.uid })}
-          disabled={isLast}
-          hitSlop={4}
-          style={[rowStyles.arrowBtn, isLast && rowStyles.arrowDisabled]}
-        >
-          <Ionicons name="chevron-down" size={16} color={isLast ? colors.textTertiary : colors.textSecondary} />
+          <Ionicons name="trash-outline" size={18} color={colors.error} />
         </Pressable>
       </View>
 
-      {/* Info */}
-      <View style={rowStyles.info}>
-        <Text style={rowStyles.name} numberOfLines={1}>{ex.name}</Text>
-        <Text style={rowStyles.meta}>
-          {ex.default_duration_seconds > 0
-            ? `${ex.default_duration_seconds}s/serie`
-            : `${ex.default_reps} reps/serie`}
-          {' · '}{ex.default_rest_seconds}s desc.
-        </Text>
-      </View>
+      {/* Row 2: steppers */}
+      <View style={rowStyles.steppersRow}>
+        {/* Sets */}
+        <View style={rowStyles.stepperGroup}>
+          <Text style={rowStyles.stepperLabel}>{t('videos.detail.sets')}</Text>
+          <View style={rowStyles.stepper}>
+            <Pressable
+              onPress={() => dispatch({ type: 'SET_SETS', uid: row.uid, sets: row.sets - 1 })}
+              hitSlop={4}
+              style={rowStyles.stepBtn}
+            >
+              <Ionicons name="remove" size={16} color={colors.textSecondary} />
+            </Pressable>
+            <Text style={rowStyles.stepNum}>{row.sets}</Text>
+            <Pressable
+              onPress={() => dispatch({ type: 'SET_SETS', uid: row.uid, sets: row.sets + 1 })}
+              hitSlop={4}
+              style={rowStyles.stepBtn}
+            >
+              <Ionicons name="add" size={16} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+        </View>
 
-      {/* Sets stepper */}
-      <View style={rowStyles.stepper}>
-        <Pressable
-          onPress={() => dispatch({ type: 'SET_SETS', uid: row.uid, sets: row.sets - 1 })}
-          hitSlop={4}
-          style={rowStyles.stepBtn}
-        >
-          <Ionicons name="remove" size={16} color={colors.textSecondary} />
-        </Pressable>
-        <Text style={rowStyles.setsNum}>{row.sets}</Text>
-        <Pressable
-          onPress={() => dispatch({ type: 'SET_SETS', uid: row.uid, sets: row.sets + 1 })}
-          hitSlop={4}
-          style={rowStyles.stepBtn}
-        >
-          <Ionicons name="add" size={16} color={colors.textSecondary} />
-        </Pressable>
-      </View>
+        {/* Reps OR Duration */}
+        {isDuration ? (
+          <View style={rowStyles.stepperGroup}>
+            <Text style={rowStyles.stepperLabel}>{t('routines.builder.duration')}</Text>
+            <View style={rowStyles.stepper}>
+              <Pressable
+                onPress={() => dispatch({ type: 'SET_DURATION', uid: row.uid, duration: row.duration - 5 })}
+                hitSlop={4}
+                style={rowStyles.stepBtn}
+              >
+                <Ionicons name="remove" size={16} color={colors.textSecondary} />
+              </Pressable>
+              <Text style={rowStyles.stepNumWide}>{row.duration}s</Text>
+              <Pressable
+                onPress={() => dispatch({ type: 'SET_DURATION', uid: row.uid, duration: row.duration + 5 })}
+                hitSlop={4}
+                style={rowStyles.stepBtn}
+              >
+                <Ionicons name="add" size={16} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={rowStyles.stepperGroup}>
+            <Text style={rowStyles.stepperLabel}>{t('videos.detail.reps')}</Text>
+            <View style={rowStyles.stepper}>
+              <Pressable
+                onPress={() => dispatch({ type: 'SET_REPS', uid: row.uid, reps: row.reps - 1 })}
+                hitSlop={4}
+                style={rowStyles.stepBtn}
+              >
+                <Ionicons name="remove" size={16} color={colors.textSecondary} />
+              </Pressable>
+              <Text style={rowStyles.stepNum}>{row.reps}</Text>
+              <Pressable
+                onPress={() => dispatch({ type: 'SET_REPS', uid: row.uid, reps: row.reps + 1 })}
+                hitSlop={4}
+                style={rowStyles.stepBtn}
+              >
+                <Ionicons name="add" size={16} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          </View>
+        )}
 
-      {/* Remove */}
-      <Pressable
-        onPress={() => dispatch({ type: 'REMOVE_EXERCISE', uid: row.uid })}
-        hitSlop={8}
-        style={rowStyles.removeBtn}
-      >
-        <Ionicons name="trash-outline" size={18} color={colors.error} />
-      </Pressable>
+        {/* Rest — all exercises */}
+        <View style={rowStyles.stepperGroup}>
+          <Text style={rowStyles.stepperLabel}>{t('routines.builder.rest')}</Text>
+          <View style={rowStyles.stepper}>
+            <Pressable
+              onPress={() => dispatch({ type: 'SET_REST', uid: row.uid, rest: row.rest - 5 })}
+              hitSlop={4}
+              style={rowStyles.stepBtn}
+            >
+              <Ionicons name="remove" size={16} color={colors.textSecondary} />
+            </Pressable>
+            <Text style={rowStyles.stepNumWide}>{row.rest}s</Text>
+            <Pressable
+              onPress={() => dispatch({ type: 'SET_REST', uid: row.uid, rest: row.rest + 5 })}
+              hitSlop={4}
+              style={rowStyles.stepBtn}
+            >
+              <Ionicons name="add" size={16} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -349,13 +596,18 @@ export default function RoutineBuilderScreen() {
     dispatch({ type: 'ADD_EXERCISE', exercise });
   }
 
+  function handleRemoveExercise(exerciseId: string) {
+    const row = state.exercises.find((e) => e.exercise.id === exerciseId);
+    if (row) dispatch({ type: 'REMOVE_EXERCISE', uid: row.uid });
+  }
+
   async function handleSave() {
     if (!state.name.trim()) {
-      Alert.alert('Nombre requerido', 'Dale un nombre a tu rutina antes de guardar.');
+      Alert.alert(t('routines.builder.nameRequired'), t('routines.builder.nameRequiredMsg'));
       return;
     }
     if (state.exercises.length === 0) {
-      Alert.alert('Sin ejercicios', 'Agregá al menos un ejercicio a tu rutina.');
+      Alert.alert(t('routines.builder.noExercises'), t('routines.builder.noExercisesMsg'));
       return;
     }
 
@@ -372,9 +624,9 @@ export default function RoutineBuilderScreen() {
           id:               `${row.uid}-${row.exercise.id}`,
           exercise_name:    row.exercise.name,
           sets:             row.sets,
-          reps:             row.exercise.default_reps,
-          duration_seconds: row.exercise.default_duration_seconds,
-          rest_seconds:     row.exercise.default_rest_seconds,
+          reps:             row.reps,
+          duration_seconds: row.duration,
+          rest_seconds:     row.rest,
           video_id:         row.exercise.video_id,
           note:             row.exercise.note,
         })),
@@ -406,11 +658,11 @@ export default function RoutineBuilderScreen() {
       return;
     }
     Alert.alert(
-      'Descartar rutina',
-      '¿Seguro que querés salir? Los cambios no se guardarán.',
+      t('routines.builder.discard'),
+      t('routines.builder.discardMsg'),
       [
         { text: t('common.cancel'), style: 'cancel' },
-        { text: 'Descartar', style: 'destructive', onPress: () => router.back() },
+        { text: t('routines.builder.discardConfirm'), style: 'destructive', onPress: () => router.back() },
       ],
     );
   }
@@ -474,7 +726,7 @@ export default function RoutineBuilderScreen() {
               <View style={styles.emptyRoutine}>
                 <Ionicons name="add-circle-outline" size={36} color={colors.textTertiary} />
                 <Text style={styles.emptyRoutineText}>
-                  Todavía no hay ejercicios.{'\n'}Tocá "+" para agregar.
+                  {t('routines.builder.emptyExercises')}
                 </Text>
               </View>
             ) : (
@@ -497,13 +749,13 @@ export default function RoutineBuilderScreen() {
               onPress={() => setModalOpen(true)}
             >
               <Ionicons name="add" size={18} color={colors.accent} />
-              <Text style={styles.addExBtnText}>Agregar ejercicio</Text>
+              <Text style={styles.addExBtnText}>{t('routines.builder.addExercise')}</Text>
             </Pressable>
           </View>
 
           {/* ── Settings ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Configuración</Text>
+            <Text style={styles.sectionLabel}>{t('routines.builder.settings')}</Text>
             <View style={styles.settingsCard}>
               {/* Share with community */}
               <View style={styles.settingRow}>
@@ -531,9 +783,9 @@ export default function RoutineBuilderScreen() {
                 <>
                   <View style={styles.settingDivider} />
                   <View style={styles.summaryRow}>
-                    <SummaryPill icon="barbell-outline"  label={`${state.exercises.length} ejercicios`} />
-                    <SummaryPill icon="layers-outline"   label={`${state.exercises.reduce((a, e) => a + e.sets, 0)} series`} />
-                    <SummaryPill icon="time-outline"     label={`~${estimatedMin}min`} />
+                    <SummaryPill icon="barbell-outline"  label={t('routines.exercises', { count: state.exercises.length })} />
+                    <SummaryPill icon="layers-outline"   label={t('routines.builder.sets', { n: state.exercises.reduce((a, e) => a + e.sets, 0) })} />
+                    <SummaryPill icon="time-outline"     label={t('routines.builder.estimatedTime', { min: estimatedMin })} />
                   </View>
                 </>
               )}
@@ -546,6 +798,7 @@ export default function RoutineBuilderScreen() {
         visible={modalOpen}
         onClose={() => setModalOpen(false)}
         onAdd={handleAddExercise}
+        onRemove={handleRemoveExercise}
         alreadyAdded={alreadyAdded}
       />
     </SafeAreaView>
@@ -722,14 +975,18 @@ const styles = StyleSheet.create({
 
 const rowStyles = StyleSheet.create({
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: colors.bgSecondary,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
+    gap: spacing.xs,
+  },
+
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
   },
 
@@ -739,7 +996,35 @@ const rowStyles = StyleSheet.create({
 
   info: { flex: 1, gap: 2 },
   name: { fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: colors.textPrimary },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
   meta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: colors.textTertiary },
+
+  removeBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  steppersRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingLeft: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
+
+  stepperGroup: {
+    alignItems: 'center',
+    gap: 4,
+  },
+
+  stepperLabel: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.xs,
+    color: colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
 
   stepper: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   stepBtn: {
@@ -750,19 +1035,19 @@ const rowStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  setsNum: {
+  stepNum: {
     fontFamily: fontFamily.bold,
     fontSize: fontSize.base,
     color: colors.textPrimary,
     minWidth: 22,
     textAlign: 'center',
   },
-
-  removeBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+  stepNumWide: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.base,
+    color: colors.textPrimary,
+    minWidth: 36,
+    textAlign: 'center',
   },
 });
 
@@ -814,7 +1099,8 @@ const modalStyles = StyleSheet.create({
     color: colors.textPrimary,
     height: '100%',
   },
-  categoryScroll: { flexGrow: 0 },
+  categoryScroll: { flexGrow: 0, flexShrink: 0 },
+  exerciseList:   { flex: 1 },
   categoryRow: {
     gap: spacing.sm,
     paddingHorizontal: spacing.screen,
@@ -847,11 +1133,14 @@ const modalStyles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.screen,
     paddingVertical: spacing.md,
-    gap: spacing.md,
+    gap: spacing.sm,
   },
-  exInfo: { flex: 1, gap: 3 },
+  exInfo: { flex: 1, gap: 4 },
+  exNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
   exName: { fontFamily: fontFamily.medium, fontSize: fontSize.base, color: colors.textPrimary },
   exMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: colors.textSecondary },
+  exActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  previewVideoBtn: { padding: 2 },
   addBtn: {
     width: 32,
     height: 32,
@@ -864,4 +1153,15 @@ const modalStyles = StyleSheet.create({
   addBtnAdded: { borderColor: colors.success },
   emptyWrap: { alignItems: 'center', paddingTop: spacing['4xl'] },
   emptyText: { fontFamily: fontFamily.regular, fontSize: fontSize.base, color: colors.textSecondary },
+  doneBtn: {
+    backgroundColor: colors.accentDim,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  doneBtnText: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.sm,
+    color: colors.accent,
+  },
 });

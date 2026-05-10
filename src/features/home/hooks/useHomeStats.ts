@@ -1,39 +1,52 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+
+import { calculateStreak, getActivityDates } from '../../../lib/activity';
 
 interface HomeStats {
   sessions: number;
-  saved: number;
+  streak: number;
+  myRoutines: number;
 }
 
 export function useHomeStats(): HomeStats {
-  const [stats, setStats] = useState<HomeStats>({ sessions: 0, saved: 0 });
+  const [stats, setStats] = useState<HomeStats>({
+    sessions: 0,
+    streak: 0,
+    myRoutines: 0,
+  });
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [allKeys, routinesRaw] = await Promise.all([
-          AsyncStorage.getAllKeys(),
-          AsyncStorage.getItem('@volleytip/my_routines'),
-        ]);
+  useFocusEffect(
+    useCallback(() => {
+      async function load() {
+        try {
+          const [allKeys, routinesRaw, activityDates] = await Promise.all([
+            AsyncStorage.getAllKeys(),
+            AsyncStorage.getItem('@volleytip/my_routines'),
+            getActivityDates(),
+          ]);
 
-        const sessions = allKeys.filter((k) =>
-          k.startsWith('@volleytip/day_done_'),
-        ).length;
+          const sessions = allKeys.filter((k) =>
+            k.startsWith('@volleytip/day_done_'),
+          ).length;
 
-        let saved = 0;
-        if (routinesRaw) {
-          const parsed: unknown = JSON.parse(routinesRaw);
-          saved = Array.isArray(parsed) ? parsed.length : 0;
+          const streak = calculateStreak(activityDates);
+
+          let myRoutines = 0;
+          if (routinesRaw) {
+            const parsed: unknown = JSON.parse(routinesRaw);
+            myRoutines = Array.isArray(parsed) ? parsed.length : 0;
+          }
+
+          setStats({ sessions, streak, myRoutines });
+        } catch {
+          // keep defaults on error
         }
-
-        setStats({ sessions, saved });
-      } catch {
-        // keep defaults on error
       }
-    }
-    load();
-  }, []);
+      load();
+    }, []),
+  );
 
   return stats;
 }

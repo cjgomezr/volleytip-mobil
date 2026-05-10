@@ -22,9 +22,10 @@ export default function RegisterScreen() {
   const router = useRouter();
 
   const [name,     setName]     = useState('');
+  const [username, setUsername] = useState('');
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [errors,   setErrors]   = useState<{ name?: string; email?: string; password?: string }>({});
+  const [errors,   setErrors]   = useState<{ name?: string; username?: string; email?: string; password?: string }>({});
   const [confirmed, setConfirmed] = useState(false);
 
   const { signUp, signInWithGoogle, loading } = useAuthStore();
@@ -32,6 +33,8 @@ export default function RegisterScreen() {
   function validate() {
     const e: typeof errors = {};
     if (!name.trim())     e.name     = t('errors.generic');
+    if (!username.trim()) e.username = t('errors.generic');
+    else if (!/^[a-zA-Z0-9_]{3,20}$/.test(username.trim())) e.username = t('auth.usernameHint');
     if (!email.trim())    e.email    = t('errors.generic');
     if (!password)        e.password = t('errors.generic');
     if (password && password.length < 8) e.password = t('auth.errorWeakPassword');
@@ -42,7 +45,7 @@ export default function RegisterScreen() {
   async function handleSignUp() {
     if (!validate()) return;
     try {
-      const { needsConfirmation } = await signUp(email.trim(), password, name.trim());
+      const { needsConfirmation } = await signUp(email.trim(), password, name.trim(), username.trim().toLowerCase());
       if (needsConfirmation) {
         setConfirmed(true);
       }
@@ -120,6 +123,15 @@ export default function RegisterScreen() {
             onChangeText={(v) => { setName(v); setErrors((e) => ({ ...e, name: undefined })); }}
             autoComplete="name"
             error={errors.name}
+          />
+          <Input
+            label={t('auth.username')}
+            placeholder="juanperez_vol"
+            value={username}
+            onChangeText={(v) => { setUsername(v); setErrors((e) => ({ ...e, username: undefined })); }}
+            autoCapitalize="none"
+            autoComplete="username"
+            error={errors.username}
           />
           <Input
             label={t('auth.email')}

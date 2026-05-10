@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { recordActivityDate } from '../../src/lib/activity';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
@@ -185,7 +186,6 @@ function VideoModal({ visible, videoUrl, onClose }: VideoModalProps) {
           style={styles.videoModalPlayer}
           contentFit="contain"
           nativeControls
-          allowsFullscreen
         />
       </View>
     </Modal>
@@ -229,6 +229,7 @@ export default function WorkoutScreen() {
     if (state.phase === 'complete') {
       AsyncStorage.setItem(doneKey(id), 'true');
       AsyncStorage.removeItem(progressKey(id));
+      recordActivityDate();
     } else {
       AsyncStorage.setItem(progressKey(id), JSON.stringify(state));
     }
@@ -414,6 +415,17 @@ export default function WorkoutScreen() {
               </View>
             )}
           </View>
+
+          {/* Ver video */}
+          {currentVideo && (
+            <Pressable
+              style={({ pressed }) => [styles.watchVideoBtn, pressed && { opacity: 0.7 }]}
+              onPress={() => dispatch({ type: 'OPEN_VIDEO' })}
+            >
+              <Ionicons name="play-circle-outline" size={18} color={colors.accent} />
+              <Text style={styles.watchVideoBtnText}>{t('workout.watchAgain')}</Text>
+            </Pressable>
+          )}
 
           {/* Complete set button */}
           <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 16 }]}>
@@ -754,6 +766,20 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.regular,
     fontSize: fontSize.sm,
     color: colors.textSecondary,
+  },
+
+  // ── Watch video button ────────────────────────────────────────────────
+  watchVideoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  watchVideoBtnText: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.sm,
+    color: colors.accent,
   },
 
   // ── Bottom bar ────────────────────────────────────────────────────────

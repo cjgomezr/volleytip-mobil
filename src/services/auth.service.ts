@@ -4,19 +4,36 @@ import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../lib/supabase';
 import { DbUser } from '../types/database.types';
 
-export async function signIn(email: string, password: string) {
+export async function signIn(emailOrUsername: string, password: string) {
+  let email = emailOrUsername.trim();
+
+  if (!email.includes('@')) {
+    // Resolve username → email via RPC (requires find_email_by_username function in Supabase)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any).rpc('find_email_by_username', { p_username: email });
+    if (error || !data) throw new Error('invalid credentials');
+    email = data as string;
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
-export async function signUp(email: string, password: string, fullName: string) {
+export async function signUp(email: string, password: string, fullName: string, username: string) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { name: fullName } },
+    options: { data: { name: fullName, username } },
   });
   if (error) throw error;
+
+  // Save username to profile immediately (works when email confirmation is disabled)
+  if (data.user) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('users') as any).update({ username }).eq('id', data.user.id);
+  }
+
   return data;
 }
 

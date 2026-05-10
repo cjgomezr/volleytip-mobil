@@ -27,7 +27,6 @@ import { usePurchasesStore } from '../src/store/purchases.store';
 
 SplashScreen.preventAutoHideAsync();
 
-// Separated so useProtectedRoute runs inside the navigation context
 function RootNavigator() {
   useProtectedRoute();
   return <Stack screenOptions={{ headerShown: false }} />;
@@ -61,7 +60,6 @@ export default function RootLayout() {
     initialize();
   }, []);
 
-  // Sync purchases whenever auth state changes
   useEffect(() => {
     if (!authInitialized) return;
     if (session?.user.id) {

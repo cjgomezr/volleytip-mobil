@@ -77,6 +77,13 @@ function FeaturedVideoCard({
   return (
     <Pressable style={styles.videoCard} onPress={onPress}>
       <View style={styles.videoThumb}>
+        {item.thumbnail_url && (
+          <Image
+            source={{ uri: item.thumbnail_url }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+          />
+        )}
         <View style={styles.videoPlayIcon}>
           <Ionicons name="play" size={18} color={colors.textPrimary} />
         </View>
@@ -101,7 +108,11 @@ function PurchasedCourseCard({
   const { t } = useTranslation();
   return (
     <Pressable style={styles.purchasedCard} onPress={onPress}>
-      <View style={styles.purchasedThumb} />
+      <Image
+        source={item.thumbnail_url ? { uri: item.thumbnail_url } : undefined}
+        style={styles.purchasedThumb}
+        contentFit="cover"
+      />
       <View style={styles.purchasedInfo}>
         <Badge
           label={
@@ -133,7 +144,11 @@ function FeaturedCourseCard({
   const { t } = useTranslation();
   return (
     <Pressable style={styles.featuredCourseCard} onPress={onPress}>
-      <View style={styles.featuredCourseThumb} />
+      <Image
+        source={item.thumbnail_url ? { uri: item.thumbnail_url } : undefined}
+        style={styles.featuredCourseThumb}
+        contentFit="cover"
+      />
       <View style={styles.featuredCourseInfo}>
         <Badge
           label={
@@ -294,16 +309,11 @@ export default function HomeScreen() {
       >
         {/* ── Header ── */}
         <View style={styles.headerRow}>
-          <View style={styles.headerText}>
-            <Text variant="caption" color={colors.textSecondary}>
-              {t(`home.${greetingKey}`, { name: firstName })}
-            </Text>
-            <Image
-              source={require('../../assets/images/LogoSimpleAzul.png')}
-              style={styles.headerLogo}
-              contentFit="contain"
-            />
-          </View>
+          <Image
+            source={require('../../assets/images/LogoSimpleAzul.png')}
+            style={styles.headerLogo}
+            contentFit="contain"
+          />
           <Pressable onPress={() => router.push('/(tabs)/profile')} hitSlop={8}>
             <View style={styles.avatar}>
               <Text style={styles.avatarLetter}>
@@ -313,13 +323,18 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
+        {/* ── Greeting ── */}
+        <Text variant="h3" style={styles.greeting}>
+          {t(`home.${greetingKey}`, { name: firstName })}
+        </Text>
+
         {/* ── Quick stats ── */}
         <View style={styles.statsRow}>
           {(
             [
               [t('home.sessionsCompleted'), String(stats.sessions)],
-              [t('home.streak'), `0 ${t('home.days')}`],
-              [t('home.saved'), String(stats.saved)],
+              [t('home.streak'), stats.streak > 0 ? `${stats.streak} ${t('home.days')}` : `0 ${t('home.days')}`],
+              [t('home.myRoutines'), String(stats.myRoutines)],
             ] as [string, string][]
           ).map(([label, value]) => (
             <View key={label} style={styles.statCard}>
@@ -442,8 +457,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: spacing.lg,
   },
-  headerText: { gap: 4 },
   headerLogo: { width: 110, height: 28 },
+  greeting: { marginTop: -spacing.xs },
   avatar: {
     width: 40,
     height: 40,

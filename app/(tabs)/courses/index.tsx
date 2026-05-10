@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   TextInput,
   View,
@@ -12,34 +13,31 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CourseCard } from '../../../src/components/courses/CourseCard';
-import { Chip } from '../../../src/components/ui/Chip';
-import { Text } from '../../../src/components/ui';
+import { Chip, SkeletonLoader, Text } from '../../../src/components/ui';
 import { CourseItem } from '../../../src/data/courses.mock';
-import { getAllCourses } from '../../../src/services/courses.service';
+import { useCourses } from '../../../src/features/courses/hooks/useCoursesData';
+import { queryClient } from '../../../src/lib/query-client';
 import { colors, fontFamily, fontSize, radius, spacing } from '../../../src/theme';
 import { CourseType } from '../../../src/types/database.types';
 
-const TYPE_FILTERS: Array<{ key: CourseType | 'all'; label: string }> = [
-  { key: 'all',              label: 'Todos' },
-  { key: 'training_program', label: 'Programas' },
-  { key: 'video_collection', label: 'Colecciones' },
-];
 
 export default function CoursesScreen() {
   const { t }  = useTranslation();
   const router = useRouter();
 
-  const [search,   setSearch]   = useState('');
-  const [typeKey,  setTypeKey]  = useState<CourseType | 'all'>('all');
+  const TYPE_FILTERS: Array<{ key: CourseType | 'all'; label: string }> = [
+    { key: 'all',              label: t('courses.filters.all' as any) },
+    { key: 'training_program', label: t('courses.filters.programs' as any) },
+    { key: 'video_collection', label: t('courses.filters.collections' as any) },
+  ];
 
-  const courses = useMemo(
-    () =>
-      getAllCourses({
-        type:   typeKey !== 'all' ? typeKey : undefined,
-        search: search || undefined,
-      }),
-    [typeKey, search],
-  );
+  const [search,  setSearch]  = useState('');
+  const [typeKey, setTypeKey] = useState<CourseType | 'all'>('all');
+
+  const { data: courses, isLoading, refetch } = useCourses({
+    type:   typeKey !== 'all' ? typeKey : undefined,
+    search: search || undefined,
+  });
 
   function renderItem({ item }: { item: CourseItem }) {
     return (
@@ -91,22 +89,37 @@ export default function CoursesScreen() {
       </View>
 
       {/* Course list */}
-      <FlatList
-        data={courses}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="search-outline" size={40} color={colors.textTertiary} />
-            <Text variant="bodySmall" color={colors.textSecondary} align="center">
-              {t('courses.noResults')}
-            </Text>
-          </View>
-        }
-      />
+      {isLoading ? (
+        <View style={styles.skeletons}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonLoader key={i} height={110} style={{ borderRadius: 12 }} />
+          ))}
+        </View>
+      ) : (
+        <FlatList
+          data={courses ?? []}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => { queryClient.invalidateQueries({ queryKey: ['courses'] }); refetch(); }}
+              tintColor={colors.accent}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="search-outline" size={40} color={colors.textTertiary} />
+              <Text variant="bodySmall" color={colors.textSecondary} align="center">
+                {t('courses.noResults')}
+              </Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -149,6 +162,11 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
 
+  skeletons: {
+    gap: spacing.md,
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.sm,
+  },
   listContent: {
     paddingHorizontal: spacing.screen,
     paddingBottom: spacing['3xl'],

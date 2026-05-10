@@ -62,6 +62,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-video',
     'expo-web-browser',
     'expo-localization',
+    [
+      'expo-image-picker',
+      { photosPermission: 'Necesitamos acceso a tus fotos para actualizar tu avatar.' },
+    ],
     // 'react-native-purchases' — agregar cuando se active RevenueCat en dev build
   ],
 
