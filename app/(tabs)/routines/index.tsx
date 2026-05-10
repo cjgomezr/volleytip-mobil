@@ -108,15 +108,24 @@ export default function RoutinesScreen() {
       {/* Header row */}
       <View style={styles.headerRow}>
         <Text variant="h3">{t('nav.routines')}</Text>
-        {section === 'mine' && (
+        <View style={styles.headerBtns}>
           <Pressable
-            style={({ pressed }) => [styles.createBtn, pressed && { opacity: 0.8 }]}
-            onPress={() => router.push('/routine-builder' as any)}
+            style={({ pressed }) => [styles.surpriseBtn, pressed && { opacity: 0.8 }]}
+            onPress={() => router.push('/routine-generator' as any)}
           >
-            <Ionicons name="add" size={18} color={colors.bgPrimary} />
-            <Text style={styles.createBtnText}>{t('routines.create')}</Text>
+            <Ionicons name="shuffle" size={16} color={colors.accent} />
+            <Text style={styles.surpriseBtnText}>{t('routines.generator.surpriseMe')}</Text>
           </Pressable>
-        )}
+          {section === 'mine' && (
+            <Pressable
+              style={({ pressed }) => [styles.createBtn, pressed && { opacity: 0.8 }]}
+              onPress={() => router.push('/routine-builder' as any)}
+            >
+              <Ionicons name="add" size={18} color={colors.bgPrimary} />
+              <Text style={styles.createBtnText}>{t('routines.create')}</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
 
       {/* Section tabs */}
@@ -232,6 +241,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.screen,
     paddingTop: spacing.xl,
     paddingBottom: spacing.md,
+  },
+  headerBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  surpriseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+  },
+  surpriseBtnText: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.sm,
+    color: colors.accent,
   },
   createBtn: {
     flexDirection: 'row',
