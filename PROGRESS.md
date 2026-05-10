@@ -1,6 +1,6 @@
 # VolleyTip — Estado del Proyecto
 
-Última actualización: 2026-05-10 — Módulos completados: M1–M14 + extras + mejoras visuales
+Última actualización: 2026-05-10 — Módulos completados: M1–M14 + extras + generador de rutinas
 
 ---
 
@@ -186,6 +186,7 @@ estabilizar la referencia cuando el curso no es `training_program`.
 - Sort chips: más gustadas / más nuevas
 - Like optimista con `Set<string>`
 - `useFocusEffect` recarga rutinas propias desde AsyncStorage al volver al tab
+- **Botón "Sorpréndeme"** (outline, siempre visible) en el header → navega a `routine-generator`
 
 ### ✅ M11 — RevenueCat (Pagos)
 `src/lib/revenuecat.ts` — wrapper con **stub mode automático** (si SDK no disponible → stubs).
@@ -217,6 +218,41 @@ Los tres reproductores (`videos/[id]`, `workout/[id]`, `routine/[id]`) usan `res
 - **Sección "Seguinos"**: links a Instagram, TikTok, X y web via `expo-linking`
 - Cerrar sesión con confirmación
 - `src/features/profile/services/profile.service.ts`: `updateProfile`, `uploadAvatar`
+
+### ✅ M15 — Generador de Rutinas Aleatorias
+
+**`app/routine-generator.tsx`** — pantalla completa con dos fases:
+
+**Fase Config:**
+- 3 selectores de chip horizontal/wrap: **Grupo muscular** (Todos/Piernas/Core/Hombros/Brazos/Espalda), **Cantidad** (3/5/7), **Nivel** (Todos/Básico/Intermedio/Avanzado)
+- Mapeo nivel → categorías: Básico → `[movilidad, tecnica, core]`, Avanzado → `[saltabilidad, fuerza, pliometria]`, Todos/Intermedio → sin filtro de categoría
+- Validación en tiempo real: si el pool no tiene suficientes ejercicios con los filtros actuales, muestra aviso y deshabilita "Generar"
+- Botón "Generar" con ícono shuffle
+
+**Fase Preview:**
+- Tarjetas de ejercicio con: índice numerado, nombre, `MuscleGroupBadge` coloreado, botón de video (si tiene `video_id`), botón "Reemplazar"
+- **3 steppers editables por ejercicio**: Series (1–10), Reps (1–100) o Tiempo en segundos (5–300s, paso ±5s) según tipo, Descanso (0–300s, paso ±15s)
+- **"Reemplazar"**: busca en el pool un ejercicio del mismo grupo muscular → si no hay, mismo `category` → si no hay, cualquier no seleccionado
+- **"Nueva rutina"** (header): regenera toda la selección con los filtros originales
+- `VideoModal` para previsualizar ejercicio (expo-video)
+- Tiempo estimado en el header
+- Barra inferior con:
+  - **"Guardar rutina"** (outline): abre `SaveModal` → nombre + toggle comunidad → guarda en `@volleytip/my_routines` → `router.back()`
+  - **"Empezar ahora"** (filled): igual pero al guardar navega directamente a `routine/{id}`
+
+**Save Modal (pageSheet):**
+- `TextInput` para nombre (default: `t('routines.generator.defaultName')`)
+- Switch "Compartir con la comunidad"
+- Usa la misma clave `routines.builder.saveRoutine` para reutilizar traducción
+
+**Integración:**
+- Guarda en el mismo formato `Routine` / `RoutineExercise` que `routine-builder.tsx` → compatible con `routine/[id].tsx` sin cambios
+- ID generado: `routine-gen-${Date.now()}`
+- Nivel en AsyncStorage: `basico` / `avanzado` / `intermedio` según filtro seleccionado
+- Función `pickExercises` y `swapExercise` son puras (sin side effects) → fácil de migrar a Supabase
+
+**i18n (11 nuevas claves bajo `routines.generator`):**
+`title`, `surpriseMe`, `muscleGroup`, `count`, `level`, `generate`, `regenerate`, `replace`, `startNow`, `defaultName`, `noExercisesTitle`, `noExercisesMsg`
 
 ---
 
@@ -331,7 +367,8 @@ volleytip-app/
 │   │   └── profile.tsx          ← Perfil, avatar, stats, social links
 │   ├── workout/[id].tsx         ← Ejecución día de programa (máquina de estados)
 │   ├── routine/[id].tsx         ← Ejecución rutina libre
-│   └── routine-builder.tsx      ← Creador de rutinas con steppers, badges, preview video
+│   ├── routine-builder.tsx      ← Creador de rutinas con steppers, badges, preview video
+│   └── routine-generator.tsx    ← Generador aleatorio: config + preview + save/start
 │
 ├── src/
 │   ├── components/ui/           ← Text, Button, Card, Chip, ProgressBar, SkeletonLoader
@@ -412,9 +449,10 @@ R2_PUBLIC_URL=               # Vacío en dev → usa sample videos de Google
 | Cursos — lista | ✅ | Mock data |
 | Cursos — detalle + paywall | ✅ | Paywall en stub mode |
 | Workout — ejecución | ✅ | Máquina de estados completa |
-| Rutinas — lista | ✅ | 3 tabs, búsqueda, likes |
+| Rutinas — lista | ✅ | 3 tabs, búsqueda, likes, botón "Sorpréndeme" |
 | Rutina libre — ejecución | ✅ | Busca en AsyncStorage para rutinas propias |
 | Creador de rutinas | ✅ | Steppers sets/reps/tiempo/descanso, badges músculo, preview video, toggle para quitar |
+| **Generador de rutinas** | ✅ | Config + preview + steppers + replace + save/start |
 | Perfil | ✅ | Avatar upload, stats, cursos comprados, idioma, social links |
 
 ### Qué usa datos reales de Supabase vs mock
@@ -432,32 +470,58 @@ R2_PUBLIC_URL=               # Vacío en dev → usa sample videos de Google
 
 ## 9. Próximas Tareas Disponibles
 
-### Extra — Google OAuth
+### 🔲 Conectar datos reales de Supabase (prioridad alta)
+Estrategia: cada servicio hace query real y usa `data ?? MOCK_DATA` como fallback.
+- `videos.service.ts` → tabla `videos` (filtros por categoría, búsqueda)
+- `courses.service.ts` → tablas `courses`, `course_modules`, `module_items`
+- `routines.service.ts` → tablas `routines`, `routine_exercises`, `routine_likes`
+- `exercises` → tabla `exercises` (hoy solo se usan en builder y generator desde mock)
+- El seed.sql ya tiene el schema completo + datos mock para poblar Supabase
+- `routine-generator.tsx`: la función `pickExercises` ya está separada, fácil de migrar a query Supabase
+
+**SQL pendiente (ejecutar en Supabase):**
+```sql
+-- Actualizar URLs de video en tabla videos (reemplazar URLs dummy por sample videos funcionales)
+-- Ver script en conversación anterior (5 Google CDN URLs distribuidas aleatoriamente)
+```
+
+### 🔲 Google OAuth
 Paquetes instalados: `expo-auth-session`, `expo-web-browser`. Código en `auth.service.ts` ya escrito.
-Pasos pendientes:
 1. Crear OAuth app en Google Cloud Console → obtener Client ID
 2. Supabase Dashboard → Auth → Providers → Google → activar + pegar credenciales
 3. Agregar redirect URI `volleytip://` en Google Cloud Console y en Supabase
 
-### Extra — Datos reales en Supabase
-Estrategia: cada servicio hace query real y usa `data ?? MOCK_DATA` como fallback.
-Archivos a migrar: `videos.service.ts`, `courses.service.ts`, `routines.service.ts`, `exercises.mock.ts`.
-El seed.sql tiene el schema completo + datos mock para poblar Supabase.
-
-### Extra — RevenueCat
+### 🔲 RevenueCat real
 1. `npx expo install react-native-purchases`
-2. Crear cuenta y productos en app.revenuecat.com
-3. Copiar API Keys al `.env`
-4. Nuevo EAS build para Android (el stub mode funciona en Dev Client pero RC real necesita native build)
+2. Crear proyecto y productos en app.revenuecat.com
+3. Configurar App Store Connect + Google Play con IDs: `volleytip_course_{courseId}`
+4. Copiar API Keys a `.env`
+5. Nuevo EAS build para Android (stub mode funciona en Dev Client; RC real necesita native build)
 
-### Extra — Cloudflare R2
-Subir videos reales con los paths de `video_key` en `videos.mock.ts` y activar `R2_PUBLIC_URL`.
+### 🔲 Cloudflare R2 (videos en producción)
+1. Crear bucket `volleytip-videos` en Cloudflare
+2. Activar acceso público y copiar URL pública
+3. Subir archivos MP4 con los paths exactos de `video_key` en `videos.mock.ts`
+4. Agregar `R2_PUBLIC_URL=https://videos.volleytip.app` a `.env.production`
+5. Sin cambios de código (ya preparado)
 
-### Extra — Logo y assets definitivos
+### 🔲 Supabase Storage bucket 'avatars'
+Crear en Supabase Dashboard → Storage para que funcione el upload de avatar en Perfil.
+Requiere nuevo APK dev para permisos de `expo-image-picker` en Android.
+
+### 🔲 Logo y assets definitivos
 - `assets/images/icon.png` (1024×1024)
 - `assets/images/splash.png`
 - `assets/images/adaptive-icon.png` (foreground sobre `#111116`)
 
-### Extra — Supabase Storage bucket 'avatars'
-Crear en Supabase Dashboard → Storage para que funcione el upload de avatars en la pantalla de Perfil.
-Nuevo APK dev necesario para que los permisos de `expo-image-picker` funcionen en Android.
+### 🔲 Notificaciones push (futuro)
+Recordatorio diario de entrenamiento, aviso de streak, "nueva rutina en comunidad".
+Usar `expo-notifications` + Supabase Edge Function para enviar desde servidor.
+
+### 🔲 Guardado de rutinas en Supabase (futuro)
+`routines` y `routine_exercises` ya tienen tablas. Hoy se guarda solo en AsyncStorage.
+Migrar `routine-builder.tsx` y `routine-generator.tsx` para escribir también a Supabase cuando hay sesión activa.
+
+### 🔲 Progreso de workouts en Supabase (futuro)
+Hoy el progreso queda en AsyncStorage (`@volleytip/activity_dates`, `@volleytip/my_routines`).
+Migrar a tabla `user_progress` para tener historial cross-device.
